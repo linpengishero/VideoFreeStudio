@@ -16,6 +16,8 @@ const { chromium } = require('../frontend/node_modules/playwright');
       return `
         import { createApp } from 'vue';
         import Composer from '/src/components/PluginComposer.vue';
+        import { setLocale } from '/src/services/i18n.js';
+        setLocale('zh-CN');
         const selected = {
           id: 'image.test.reference', plugin_id: 'test', plugin_folder: 'test', category: 'image', mode: 'reference', mode_name: '参考生成', operation: 'generate',
           selector_order: 1, selector_model: { id: 'test', name: 'Test', plugin_id: 'test', default: true, selector_order: 1 },
@@ -45,14 +47,14 @@ const { chromium } = require('../frontend/node_modules/playwright');
     });
     await page.goto(`${server.resolvedUrls.local[0]}reference-mention-test`);
     await page.getByRole('button', { name: '添加参考素材' }).click();
-    await page.getByLabel('上传参考图片').setInputFiles({ name: 'hero.png', mimeType: 'image/png', buffer: Buffer.from('image') });
+    await page.locator('.plugin-upload input[type="file"]').setInputFiles({ name: 'hero.png', mimeType: 'image/png', buffer: Buffer.from('image') });
     await page.getByRole('button', { name: '完成' }).click();
     await page.getByRole('button', { name: '管理1个参考素材' }).waitFor();
     const prompt = page.getByLabel('提示词');
     await prompt.fill('一个男人看向 @');
-    await page.getByRole('option', { name: /@参考图1/ }).click();
-    assert.equal(await prompt.inputValue(), '一个男人看向 @参考图1 ');
-    await page.locator('.mention-mirror mark').filter({ hasText: '@参考图1' }).waitFor();
+    await page.getByRole('option', { name: /@hero\.png/ }).click();
+    assert.equal(await prompt.inputValue(), '一个男人看向 @hero.png ');
+    await page.locator('.mention-mirror mark').filter({ hasText: '@hero.png' }).waitFor();
     await page.getByRole('button', { name: '开始生成' }).click();
     await page.waitForFunction(() => window.fetch && document.querySelector('[aria-label="开始生成"]'));
     await page.waitForTimeout(50);

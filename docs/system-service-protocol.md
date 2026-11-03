@@ -46,6 +46,44 @@ Generic provider manifests are stored in `<service-id>_providers/<provider-id>/p
 
 通用 Provider 清单位于 `<service-id>_providers/<provider-id>/provider.json`。`entry` 相对于该服务目录解析，因此同一服务可共享适配器，同时禁止路径逃逸。完整机器契约见 [`schemas/system-service-provider-v1.schema.json`](schemas/system-service-provider-v1.schema.json)。
 
+### Local hardware service / 本机硬件服务
+
+The built-in `hardware/local` provider implements the generic `hardware.snapshot` operation. It probes only when called and returns CPU model/core counts, physical memory totals/availability, and GPU names/VRAM where the host exposes them. Unknown values are `null`, with warning codes in the response; no hardware fingerprint, host name, serial, or persistent inventory is stored. GPU memory is reported only when a driver tool provides a reliable value (currently `nvidia-smi`); Windows may still report GPU names through CIM without VRAM. There is no polling, benchmark, resource score, or automatic generation decision.
+
+Plugins call it through the runtime:
+
+```python
+snapshot = runtime.call_system_service("hardware", "snapshot", {})
+```
+
+The result's scope is `gateway_host`: it describes the machine running VideoFree Studio's gateway, not necessarily the machine running ComfyUI. If those are separate hosts, remote ComfyUI hardware needs a separate explicit contract; this provider never infers or scans it. Detection is best-effort and dependency-free: Windows uses OS memory APIs and a bounded PowerShell CIM probe, Linux reads `/proc`, macOS uses `sysctl`, and NVIDIA VRAM uses a bounded `nvidia-smi` invocation. Missing tools, unsupported hardware, or unavailable permissions do not fail gateway startup; affected fields remain unknown.
+
+内置 `hardware/local` Provider 实现通用 `hardware.snapshot` 操作，仅在调用时读取 CPU 型号/核心数、物理内存总量/可用量，以及系统能探测到的 GPU 名称/显存。未知字段返回 `null`，并附带 warning code；不生成硬件指纹，不保存主机名、序列号或持久硬件清单。仅当驱动工具能可靠提供显存时才返回显存（当前使用 `nvidia-smi`）；Windows 可通过 CIM 读取 GPU 名称，但不会把可能溢出的 WMI 显存值当成可靠数据。服务不轮询、不跑基准测试、不评分，也不自动决定生成参数。
+
+插件可这样调用：`runtime.call_system_service("hardware", "snapshot", {})`。响应的 `scope` 为 `gateway_host`，表示运行 VideoFree Studio 网关的主机，不一定是运行 ComfyUI 的主机。需要 ComfyUI 主机设备信息时使用下方的 `comfyui.system_stats` 操作。探测尽力而为且不引入依赖：Windows 使用系统内存 API 和有时间上限的 PowerShell CIM 查询，Linux 读取 `/proc`，macOS 使用 `sysctl`，NVIDIA 显存通过限时 `nvidia-smi` 读取。缺少工具、硬件不支持或权限不可用都不会阻止网关启动，相关字段保持未知。
+
+### ComfyUI instance statistics / ComfyUI 实例信息
+
+The built-in `comfyui/default` generic provider exposes the read-only
+`system_stats` operation through the configured typed ComfyUI adapter. It reads
+ComfyUI's `/system_stats` endpoint and returns `scope: "comfyui_host"`, device
+name/type/index, and total/free VRAM in bytes. This reports the machine running
+ComfyUI, which may differ from the gateway host. Unavailable device fields are
+`null`; the operation does not expose raw process arguments or other host data.
+
+Plugins call it with `runtime.call_system_service("comfyui", "system_stats", {})`.
+The endpoint is a point-in-time observation, not a reservation or a workload
+benchmark; free VRAM can change before generation starts and must not be treated
+as a guarantee that a particular duration or resolution will fit.
+
+内置 `comfyui/default` 通用 Provider 通过当前配置的类型化 ComfyUI 适配器提供只读
+`system_stats` 操作。它查询 ComfyUI `/system_stats`，返回 `scope: "comfyui_host"`、设备
+名称/类型/索引及总显存/可用显存（字节）。该信息描述运行 ComfyUI 的机器，可能与网关主机不同。
+不可用字段返回 `null`；不会暴露原始进程参数或其他主机数据。
+
+插件通过 `runtime.call_system_service("comfyui", "system_stats", {})` 调用。该接口是某一时刻的
+观测，不是资源预留或负载基准；生成开始前可用显存可能变化，不能据此保证特定时长或分辨率必然可运行。
+
 The first file-storage contract is implemented separately from LLM provider discovery in `backend/integrations/system_services/storage/`: `protocol.py` owns the contract and object metadata; `local.py` implements the local backend. `StorageProvider` owns byte-object operations only: safe relative keys, `put_stream`/`put_file`, `open`, metadata listing, delete/prefix-delete, and local materialization. The framework owns project/category metadata and authorization. The built-in `LocalStorageProvider` follows the active resource-directory setting; it is not manifest-discovered because it is currently the only backend. A future storage backend must satisfy the same contract and be explicitly selected by framework configuration before use.
 
 首个文件存储契约独立于 LLM Provider 注册器，代码位于 `backend/integrations/system_services/storage/`：`protocol.py` 声明契约与对象元数据，`local.py` 实现本地后端。`StorageProvider` 只负责文件对象字节操作：安全相对键、`put_stream`/`put_file`、`open`、元数据列表、删除/前缀删除及本地物化。项目/分类元数据和授权仍归框架。本地 Provider 根据当前资源目录设置工作；目前它是唯一后端，因此没有做清单发现。未来存储后端必须实现同一契约，并由框架配置显式选择后才可启用。

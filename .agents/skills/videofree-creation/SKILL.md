@@ -103,6 +103,9 @@ selected, the gateway requires creating or selecting a project first.
    execution prompt, send both `execution_prompt_en` and its matching
    `confirmed_prompt_zh`; never update only one snapshot. Direct generation
    never silently rewrites the caller's prompt.
+   For an MCP-only remote client, use `read_job_artifact` and append its decoded
+   Base64 chunks in `offset` order until `eof=true`; do not use the gateway's
+   local filesystem path.
    For a six-panel 3x2 grid image, use `image.split_6` with exactly one image
    input; it returns six independent image artifacts in row-major order.
 

@@ -101,7 +101,7 @@ story_beats描述完整故事的起承转合、冲突、转折与结局；可以
 
 ### 制作部分
 
-production_plan.md写清按什么顺序执行、Qwen/H3能力、参考使用、声音保留、配乐简报、预算/重试上限、二采策略及成片输出规格（film-studio的width/height/fps/fit与BGM音量策略）。这里不再复制逐字剧本或逐镜描述词。
+production_plan.md写清按什么顺序执行、Qwen/H3能力、参考使用、声音保留、配乐简报、预算/重试上限、二采策略（含链式顺序：H3 latent二采在前、放大/LTX在后）及成片输出规格（film-studio的width/height/fps/fit）与响度验收指标（BGM相对对白响度目标及不低于-15dB的下限、终片峰值不超过-0.5dBFS；final QA按实测核收）。这里不再复制逐字剧本或逐镜描述词。
 
 asset_manifest.yaml：
 

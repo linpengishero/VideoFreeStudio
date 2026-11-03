@@ -104,13 +104,13 @@ python <skill_root>/scripts/validate.py gate <run_root>/production.json --stage 
 - `grids`：每个group的Qwen四宫格。
 - `panels`：每个shot的切割单格。
 - `compilations`：每镜真实compile请求、就绪回执及确认提交回执。
-- `videos`：每镜从该转换会话确认生成的初稿及媒体QA，不被二采覆盖。
-- `refinements`：按shot_id保存成功二采数组，每项含parent_job_id、parent_sha256、action_id，以及get_job实际返回的gateway_job。失败尝试只进台账。
+- `videos`：每镜从该转换会话确认生成的初稿及媒体QA（报告含dense_full的frame_sampling与anomalies_reviewed），不被二采覆盖。
+- `refinements`：按shot_id保存成功二采数组，每项含parent_job_id、parent_sha256、action_id、tech_scan，以及get_job实际返回的gateway_job。失败尝试只进台账。
 - `selected`：每个shot_id对应一个已审核的初稿或二采job_id，合成不得自动挑最新文件。
-- `composition`：保存film-studio方案与渲染回执：film_id、按计划顺序的sources（shot_id/job_id/audio_mode）、旁白audio_clips、bgm_job_id、validate/preview/render回执及output（library_path、run_root内path、sha256）；`final`保存终片path、sha256、qa、selection_sha256和compose_sha256。
+- `composition`：保存film-studio方案与渲染回执：film_id、按计划顺序的sources（shot_id/job_id/audio_mode）、旁白audio_clips、bgm_job_id、validate/preview/render回执及output（library_path、run_root内path、sha256）；`final`保存终片path、sha256、qa（含audio_loudness）、selection_sha256和compose_sha256。
 - `voices`：按说话角色asset_id保存本期声音参考：path（run_root内音频）、sha256、revision、upload_id、spec_sha256（specification(plan, "voices", asset_id)）及听检QA（stage=voice，checks为intelligibility/identity/quality）。`generated` 由网关TTS按voice计划生成并记录job_id/capability_id；`provided` 记录用户文件复制路径。同一角色全片只用同一声音参考。
 
-drafts/references/grids/panels/videos记录共有path（run_root内相对路径）、sha256、revision、job_id、capability_id、spec_sha256。drafts/references/grids和videos保存QA；panels为确定性切割结果，靠父网格SHA256、panel_index、文件SHA256及实际输入回执校验，不重复要求逐格语义QA。候选胜出记录还保存candidate_index、candidate_attempt。图像记录另有upload_id、request及gateway_inputs（get_job_inputs完整返回）；videos保存gateway_inputs和compiled_sha256（实际英文执行稿的fingerprint）。QA的input_sha256将path绑定到实测哈希；shot_ids在资产QA中使用asset_id，图格使用组内完整镜头ID，单格/视频使用对应shot_id。
+drafts/references/grids/panels/videos记录共有path（run_root内相对路径）、sha256、revision、job_id、capability_id、spec_sha256。drafts/references/grids和videos保存QA；panels为确定性切割结果，靠父网格SHA256、panel_index、文件SHA256及实际输入回执校验，不重复要求逐格语义QA。候选胜出记录还保存candidate_index、candidate_attempt。图像记录另有upload_id、request及gateway_inputs（get_job_inputs完整返回）；videos保存gateway_inputs和compiled_sha256（实际英文执行稿的fingerprint）。videos与refinements另带tech_scan={path,sha256}，指向`scripts/tech_scan.py`产出、media_sha256与产物一致的客观扫描JSON。QA的input_sha256将path绑定到实测哈希；shot_ids在资产QA中使用asset_id，图格使用组内完整镜头ID，单格/视频使用对应shot_id。
 
 revision是该产物实际审核版本，须为1到当前plan.revision；不得为“追上版本”修改旧报告。spec_sha256使用scripts/validate.py的specification(plan, section, key)，绑定当前相关资产设计/镜头/画幅，不包含全局revision。未改动资产可复用旧QA；改动及依赖源哈希变化只阻断相关下游。前期整体QA仍须对应当前plan.revision。
 
@@ -122,6 +122,6 @@ compilations每条记录含`revision`、`request`（原始submit_generation参�
 
 H3确认按开场自动制作授权处理：若`automation_authorization.h3_review_and_confirm=true`且授权证据覆盖当前revision，主制片先审核实际就绪稿，再按当前collaboration_id/revision确认，不逐稿等待用户。`production.json.h3_delegation`必须包含`approved_by: user`、授权原文及时间的`evidence`、`allow_review_and_confirm: true`，以及所有当前shot_id到`specification(plan, 'compilations', shot_id)`的`shot_specs`映射；这满足网关确认守卫的范围校验。每条`compilation.authorization`仍记录实际转换稿哈希和逐稿审核证据。没有该授权时才记录approved_by=user并等待逐稿批准；真实歧义、转换稿改变关键剧情/动作结果或超出预算必须暂停。禁止确认时覆盖稿件。
 
-成功refinements记录具有视频同等文件/QA/spec字段，gateway_job.id、status=completed及parent_job_id必须与记录匹配。父文件哈希对应真实上级，每条成功二采复审。selected覆盖全部镜头；终片QA绑定实际文件，并以selection_hash(plan)和fingerprint(composition证据)记录selection_sha256/compose_sha256。
+成功refinements记录具有视频同等文件/QA/spec字段，gateway_job.id、status=completed及parent_job_id必须与记录匹配。父文件哈希对应真实上级；每条成功二采做refine轻量QA（audio_track/loudness/artifacts，报告用`validate.py qa --stage refine`），带自身tech_scan附件，均值响度与父稿偏差超过3dB不能放行。selected覆盖全部镜头；终片QA绑定实际文件与audio_loudness测量（measurement文件、film_mean_db/film_max_db、has_bgm、bgm_relative_db不低于-15dB），并以selection_hash(plan)和fingerprint(composition证据)记录selection_sha256/compose_sha256。
 
-这些校验不能证明恶意伪造的回执真实，也不能物理阻止智能体绕开脚本调用通用MCP。宿主须落实工具白名单，主制片只经guarded_mcp提交。OpenMontage assets/edit完成检查点执行selected闸门，compose/publish执行final闸门，必须携带--production。不能用空manifest或未复审二采推进。
+这些校验不能证明恶意伪造的回执真实，也不能物理阻止智能体绕开脚本调用通用MCP。宿主须落实工具白名单，主制片只经guarded_mcp提交。OpenMontage assets/edit完成检查点执行selected闸门，compose/publish执行final闸门，必须携带--production。不能用空manifest或未过refine QA的二采推进。

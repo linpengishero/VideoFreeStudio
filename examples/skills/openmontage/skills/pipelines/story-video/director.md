@@ -69,10 +69,14 @@ ambiguity, scope changes, missing required capability or unrecoverable failure. 
 publishing is never included in local-export authorization.
 All caller submissions and confirmations use guarded_mcp.py; reference input receipts
 include actual upload IDs and hashes for every required visible subject and scene reference.
-Video QA reviews the real clip by playback or a timestamped sequence of extracted frames
-covering the start, key action beats and end; add samples around cuts and complex motion.
-Final QA samples the rendered timeline similarly and checks audio separately. A cover frame
-alone is never sufficient. Attach voice references only to dialogue shots that need them. The selected
+Video QA first requires an objective tech_scan attachment (scene cuts, frame-diff
+outliers, silence, loudness, stereo balance), then densely reviews the whole clip at
+>= 2 fps; every flagged outlier must carry a reviewed conclusion in the QA report
+(frame_sampling and anomalies_reviewed are gate-checked). Refinement QA stays
+lightweight (audio kept, loudness within 3 dB of the parent, no new artifacts) because
+the parent chain is already proven deterministically. Final QA binds measured loudness
+of the delivered file (peak <= -0.5 dBFS; BGM no more than 15 dB below dialogue).
+A cover frame alone is never sufficient. Attach voice references only to dialogue shots that need them. The selected
 gate covers reviewed refinements; the final gate binds selected media, compose inputs
 and the reviewed rendered file. Unchanged artifact specifications may reuse their QA.
 

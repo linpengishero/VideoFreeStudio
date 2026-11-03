@@ -784,7 +784,8 @@ class Database:
             rows = db.execute(query, values).fetchall()
         return [self._collaboration(row) for row in rows]
 
-    def update_collaboration(self, collaboration_id: str, values: dict[str, Any]) -> dict[str, Any] | None:
+    def update_collaboration(self, collaboration_id: str, values: dict[str, Any], *,
+                             expected_statuses: tuple[str, ...] | None = None) -> dict[str, Any] | None:
         allowed = {
             key: values[key] for key in (
                 "status", "result", "revision", "job_id", "progress", "state",
@@ -806,8 +807,15 @@ class Database:
             allowed["project_id"] = None
         allowed["updated_at"] = time.time()
         fields = ", ".join(f"{key}=?" for key in allowed)
+        where = "id=?"
+        parameters = [*allowed.values(), collaboration_id]
+        if expected_statuses is not None:
+            if not expected_statuses:
+                return self.collaboration(collaboration_id)
+            where += f" AND status IN ({','.join('?' for _ in expected_statuses)})"
+            parameters.extend(expected_statuses)
         with self.connect() as db:
-            db.execute(f"UPDATE collaborations SET {fields} WHERE id=?", (*allowed.values(), collaboration_id))
+            db.execute(f"UPDATE collaborations SET {fields} WHERE {where}", parameters)
         return self.collaboration(collaboration_id)
 
     def claim_collaboration(self, collaboration_id: str) -> bool:

@@ -117,6 +117,12 @@ plugins/my-plugin/
 
 如果动作没有用户可编辑的值，可以保留空字段表；任务仍可使用原动作输入重执行。JSON Schema 的 `default` 不会自动应用到数据；需要界面展示并持久化的缺省值必须同时在 UI 字段写 `default`。测试至少覆盖字段默认值、老任务参数回填、动作输入快照、尺寸映射和同一动作重执行。完整契约见 [`插件动作任务编辑`](../docs/plugin-protocol.md#生成动作的编辑与重执行)。
 
+### 工作台与无限画布表单兼容
+
+普通生成能力使用 `settings.ratio`、`settings.resolution` 等声明式字段，并给出明确的 `select` 选项和 `default`；不要把工作流节点的 `width`、`height` 直接暴露给用户。资源后处理动作如果需要按源素材比例选择目标清晰度，执行 Schema 仍声明整数 `width`、`height`，但 UI 必须只声明一个 `{"bind":"target_size","component":"dimensions"}` 字段。`presets` 的第一项是新任务和无限画布节点的默认档位，例如把 720P 放在第一项；宿主根据源任务尺寸、`edge`、`long_edge` 和 `alignment` 计算最终宽高并提交动作。
+
+无限画布读取与工作台相同的 `actions[].ui.fields`，不会维护模型专用表单。声明了 `dimensions` 后，画布显示一个分辨率选择器并隐藏底层宽高；未被 UI 字段覆盖的 Schema 属性可能作为高级输入端口出现。因此不要把插件内部控制字段留在公共 `input_schema`，也不要为同一含义同时声明“分辨率”和“宽/高”两套用户控件。插件测试应验证默认档位、比例保持、对齐结果，以及工作台和无限画布提交得到相同的动作输入。
+
 协作返回 `ready` 时必须提供完整的 `optimized_prompt` 和 `optimized_prompt_zh`；返回 `needs_input` 时必须提供 `session_id` 及非空 `questions`（每项包含 `text`、可选择的 `options`）。复用 `runtime.single(request)` 会由框架创建会话并修复一次格式异常；自定义协作处理器应使用 `runtime.repair_result(...)`。`start_progress` 接收阶段对象列表，例如 `[{"id": "optimize", "label": "提示词优化"}]`，不能传模式名称字符串。
 
 ## PluginRuntime

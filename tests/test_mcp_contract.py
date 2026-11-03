@@ -1,5 +1,8 @@
+import base64
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from fastapi import Request
@@ -91,7 +94,102 @@ class MCPContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("inputs", tools["run_plugin_action"]["inputSchema"]["properties"])
         self.assertFalse({'speech_preset','speech_clone','speech_describe','run_job_action'} & tools.keys())
         self.assertIn("get_job_inputs", tools)
+        self.assertEqual(tools["read_job_artifact"]["inputSchema"]["properties"]["length"]["maximum"], 1024 * 1024)
         self.assertFalse(any(name.startswith(("delete_", "update_voice")) for name in tools))
+
+    def test_upload_schema_accepts_path_or_base64(self):
+        from jsonschema import Draft202012Validator
+        schema = {tool["name"]: tool for tool in _tool_definitions()}["upload_reference"]["inputSchema"]
+        validator = Draft202012Validator(schema)
+        self.assertFalse(list(validator.iter_errors({"file_path": "C:/media/shot.png"})))
+        self.assertFalse(list(validator.iter_errors({"filename": "shot.png", "data_base64": "eA=="})))
+        self.assertTrue(list(validator.iter_errors({"file_path": "x", "data_base64": "eA=="})))
+        self.assertTrue(list(validator.iter_errors({"filename": "shot.png", "data_base64": ""})))
+        self.assertTrue(list(validator.iter_errors({"data_base64": "eA=="})))
+
+    async def test_upload_reference_reads_local_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "frame.png"
+            source.write_bytes(b"local-media")
+            with patch("backend.interfaces.http.mcp._local_api_request", return_value={"upload_id": "u1"}) as api:
+                await _tool_result("upload_reference", {"file_path": str(source)}, allow_local_file_path=True)
+            body = api.call_args.args[2]
+            self.assertIn(b'filename="frame.png"', body)
+            self.assertIn(b"local-media", body)
+
+    async def test_upload_reference_rejects_remote_local_path_and_empty_base64(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "frame.png"
+            source.write_bytes(b"local-media")
+            with self.assertRaisesRegex(ValueError, "127.0.0.1"):
+                await _tool_result("upload_reference", {"file_path": str(source)})
+        with self.assertRaisesRegex(ValueError, "exactly one"):
+            await _tool_result("upload_reference", {"filename": "frame.png", "data_base64": ""})
+
+    async def test_upload_reference_rejects_invalid_base64_before_http_upload(self):
+        with patch("backend.interfaces.http.mcp._local_api_request") as api:
+            with self.assertRaisesRegex(ValueError, "有效 Base64"):
+                await _tool_result("upload_reference", {"filename": "frame.png", "data_base64": "not base64"})
+        api.assert_not_called()
+
+    async def test_job_artifacts_adds_only_existing_safe_local_path(self):
+        from backend.interfaces.http.mcp import context
+        root = context.paths.artifacts.resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        existing = root / "mcp-contract-local.bin"
+        existing.write_bytes(b"ok")
+        try:
+            payload = {"items": [{"name": existing.name}, {"name": "../outside.bin"}, {"name": "missing.bin"}]}
+            with patch("backend.interfaces.http.mcp._local_api", new_callable=AsyncMock) as api:
+                api.return_value = payload
+                result = await _tool_result("get_job_artifacts", {"job_id": "j1"}, allow_local_file_path=True)
+            items = json.loads(result["content"][0]["text"])["items"]
+            self.assertEqual(items[0]["local_path"], str(existing))
+            self.assertNotIn("local_path", items[1])
+            self.assertNotIn("local_path", items[2])
+
+            with patch("backend.interfaces.http.mcp._local_api", new_callable=AsyncMock) as api:
+                api.return_value = {"items": [{"name": existing.name}]}
+                result = await _tool_result("get_job_artifacts", {"job_id": "j1"})
+            self.assertNotIn("local_path", json.loads(result["content"][0]["text"])["items"][0])
+        finally:
+            existing.unlink(missing_ok=True)
+
+    async def test_read_job_artifact_returns_ordered_base64_chunks(self):
+        from backend.interfaces.http.mcp import context
+        root = context.paths.artifacts.resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        existing = root / "mcp-contract-download.bin"
+        existing.write_bytes(b"remote-media")
+        try:
+            payload = {"items": [{"name": existing.name, "media_type": "application/octet-stream"}]}
+            chunks = []
+            for offset in (0, 6):
+                with patch("backend.interfaces.http.mcp._local_api", new_callable=AsyncMock) as api:
+                    api.return_value = payload
+                    result = await _tool_result("read_job_artifact", {
+                        "job_id": "j1", "artifact_index": 0, "offset": offset, "length": 6,
+                    })
+                chunks.append(json.loads(result["content"][0]["text"]))
+            self.assertEqual(base64.b64decode(chunks[0]["data_base64"]), b"remote")
+            self.assertEqual(base64.b64decode(chunks[1]["data_base64"]), b"-media")
+            self.assertEqual(chunks[0]["next_offset"], 6)
+            self.assertFalse(chunks[0]["eof"])
+            self.assertIsNone(chunks[1]["next_offset"])
+            self.assertTrue(chunks[1]["eof"])
+        finally:
+            existing.unlink(missing_ok=True)
+
+    async def test_read_job_artifact_rejects_invalid_path_and_range(self):
+        payload = {"items": [{"name": "../outside.bin"}]}
+        with patch("backend.interfaces.http.mcp._local_api", new_callable=AsyncMock) as api:
+            api.return_value = payload
+            with self.assertRaisesRegex(ValueError, "路径无效"):
+                await _tool_result("read_job_artifact", {"job_id": "j1"})
+        with patch("backend.interfaces.http.mcp._local_api", new_callable=AsyncMock) as api:
+            api.return_value = {"items": []}
+            with self.assertRaisesRegex(ValueError, "artifact_index"):
+                await _tool_result("read_job_artifact", {"job_id": "j1", "artifact_index": 1})
 
     async def test_speech_delegates_without_confirmation(self):
         with patch("backend.interfaces.http.mcp._local_api", new_callable=AsyncMock) as api:

@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "service_id": "hardware",
+  "contract_version": 1,
+  "provider_id": "local",
+  "name": "Local Hardware Information",
+  "entry": "local/provider.py:Provider",
+  "default": true,
+  "ui_hidden": true,
+  "operations": {
+    "snapshot": {
+      "description": "Read a point-in-time CPU, memory, and GPU snapshot from the gateway host.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["scope", "observed_at", "platform", "cpu", "memory", "gpus", "warnings"],
+        "properties": {
+          "scope": {"const": "gateway_host"},
+          "observed_at": {"type": "string", "format": "date-time"},
+          "platform": {
+            "type": "object",
+            "required": ["system", "architecture"],
+            "properties": {
+              "system": {"type": "string", "minLength": 1},
+              "architecture": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          },
+          "cpu": {
+            "type": "object",
+            "required": ["name", "logical_cores", "physical_cores"],
+            "properties": {
+              "name": {"type": ["string", "null"]},
+              "logical_cores": {"type": ["integer", "null"], "minimum": 1},
+              "physical_cores": {"type": ["integer", "null"], "minimum": 1}
+            },
+            "additionalProperties": false
+          },
+          "memory": {
+            "type": "object",
+            "required": ["total_bytes", "available_bytes"],
+            "properties": {
+              "total_bytes": {"type": ["integer", "null"], "minimum": 0},
+              "available_bytes": {"type": ["integer", "null"], "minimum": 0}
+            },
+            "additionalProperties": false
+          },
+          "gpus": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["index", "name", "total_memory_bytes", "free_memory_bytes"],
+              "properties": {
+                "index": {"type": "integer", "minimum": 0},
+                "name": {"type": "string", "minLength": 1},
+                "total_memory_bytes": {"type": ["integer", "null"], "minimum": 0},
+                "free_memory_bytes": {"type": ["integer", "null"], "minimum": 0}
+              },
+              "additionalProperties": false
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"enum": [
+              "cpu_details_unavailable",
+              "memory_details_unavailable",
+              "gpu_details_unavailable",
+              "gpu_memory_unavailable"
+            ]}
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

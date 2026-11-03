@@ -296,7 +296,7 @@ class FilmCompositionTests(unittest.TestCase):
         ]
         with patch.object(film_render, 'dialogue_audio', new=AsyncMock(return_value=0.4)) as mix, \
                 patch.object(ComfyWhisper, 'transcribe', new=AsyncMock(return_value=recognized)) as whisper:
-            updated = asyncio.run(service.transcribe(self.project, film['id']))
+            updated = asyncio.run(service.transcribe(self.project, film['id'], language='en'))
         mix.assert_awaited_once()
         whisper.assert_awaited_once()
         self.assertEqual(updated['captions'], [

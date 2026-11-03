@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "service_id": "comfyui",
+  "contract_version": 1,
+  "provider_id": "default",
+  "name": "Configured ComfyUI",
+  "entry": "default/provider.py:Provider",
+  "default": true,
+  "ui_hidden": true,
+  "operations": {
+    "system_stats": {
+      "description": "Read device and VRAM statistics from the configured ComfyUI instance.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "output_schema": {
+        "type": "object",
+        "required": ["scope", "devices", "comfyui_version"],
+        "properties": {
+          "scope": {"const": "comfyui_host"},
+          "comfyui_version": {"type": ["string", "null"]},
+          "devices": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "type", "index", "total_memory_bytes", "free_memory_bytes"],
+              "properties": {
+                "name": {"type": "string", "minLength": 1},
+                "type": {"type": "string", "minLength": 1},
+                "index": {"type": ["integer", "null"], "minimum": 0},
+                "total_memory_bytes": {"type": ["integer", "null"], "minimum": 0},
+                "free_memory_bytes": {"type": ["integer", "null"], "minimum": 0}
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

@@ -12,12 +12,15 @@ services instead of reading workflows or calling ComfyUI directly.
 
 import json
 import base64
+import binascii
 import asyncio
+import ipaddress
 import mimetypes
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -34,6 +37,7 @@ from .v2_schemas import CreateRequest, RegenerateRequest
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
 MCP_SERVER_INFO = {"name": "videofree", "version": PLATFORM_VERSION}
+MAX_ARTIFACT_CHUNK_BYTES = 1024 * 1024
 
 
 def _jsonrpc(request_id: Any, result: Any = None, error: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -165,8 +169,19 @@ def _tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": "upload_reference",
-            "description": "上传一个 Base64 素材并返回可复用的 upload_id。",
-            "inputSchema": {"type": "object", "required": ["filename", "data_base64"], "properties": {"filename": {"type": "string"}, "data_base64": {"type": "string"}, "media_type": {"type": "string"}}},
+            "description": "上传本机文件或 Base64 素材并返回可复用的 upload_id；二者只能选一个。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"filename": {"type": "string", "minLength": 1},
+                               "data_base64": {"type": "string", "minLength": 1},
+                               "file_path": {"type": "string", "minLength": 1,
+                                             "description": "仅限通过 127.0.0.1/::1 连接的客户端读取网关本机文件。"},
+                               "media_type": {"type": "string"}},
+                "oneOf": [
+                    {"required": ["filename", "data_base64"], "not": {"required": ["file_path"]}},
+                    {"required": ["file_path"], "not": {"required": ["data_base64"]}},
+                ],
+            },
         },
         {
             "name": "submit_generation",
@@ -187,6 +202,21 @@ def _tool_definitions() -> list[dict[str, Any]]:
             "name": "get_job_artifacts",
             "description": "获取任务的全部媒体产物和下载 URL。",
             "inputSchema": {"type": "object", "required": ["job_id"], "properties": {"job_id": {"type": "string"}}},
+        },
+        {
+            "name": "read_job_artifact",
+            "description": "分块读取任务产物并返回 Base64；局域网或远程客户端重复调用直到 eof=true 后按 offset 拼接。",
+            "inputSchema": {
+                "type": "object",
+                "required": ["job_id"],
+                "properties": {
+                    "job_id": {"type": "string", "minLength": 1},
+                    "artifact_index": {"type": "integer", "minimum": 0, "default": 0},
+                    "offset": {"type": "integer", "minimum": 0, "default": 0},
+                    "length": {"type": "integer", "minimum": 1, "maximum": MAX_ARTIFACT_CHUNK_BYTES,
+                               "default": MAX_ARTIFACT_CHUNK_BYTES},
+                },
+            },
         },
         {
             "name": "get_job_inputs",
@@ -252,7 +282,7 @@ def _tool_definitions() -> list[dict[str, Any]]:
     return tools
 
 
-async def _tool_result(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+async def _tool_result(name: str, arguments: dict[str, Any], *, allow_local_file_path: bool = False) -> dict[str, Any]:
     if name in {"list_jobs", "list_library", "list_collaborations"}:
         fields = {"list_jobs": ("project_id", "kind", "status", "limit", "offset"),
                   "list_library": ("project_id", "kind", "category_id", "limit", "offset", "sort"),
@@ -387,9 +417,38 @@ async def _tool_result(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             {"message": str(arguments.get("message", ""))},
         ))
     if name == "upload_reference":
-        filename = str(arguments.get("filename", "reference.bin")).replace("\\", "/").rsplit("/", 1)[-1]
+        has_base64 = isinstance(arguments.get("data_base64"), str) and bool(arguments["data_base64"])
+        has_path = isinstance(arguments.get("file_path"), str) and bool(arguments["file_path"].strip())
+        if has_base64 == has_path:
+            raise ValueError("upload_reference requires exactly one of data_base64 or file_path")
+        source = None
+        if has_path:
+            if not allow_local_file_path:
+                raise ValueError("file_path 仅允许通过网关本机 127.0.0.1 或 ::1 的 MCP 连接使用")
+            source = Path(arguments["file_path"]).expanduser().resolve()
+            if not source.is_file():
+                raise ValueError("file_path must reference an existing regular file")
+            if source.stat().st_size > context.config.max_upload_bytes:
+                raise ValueError(f"file exceeds upload limit ({context.config.max_upload_bytes} bytes)")
+        default_name = source.name if source is not None else "reference.bin"
+        filename = str(arguments.get("filename") or default_name).replace("\\", "/").rsplit("/", 1)[-1]
+        if not filename or any(char in filename for char in '\r\n"'):
+            raise ValueError("filename contains invalid characters")
         media_type = str(arguments.get("media_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
-        raw = base64.b64decode(str(arguments.get("data_base64", "")), validate=True)
+        if source is not None:
+            raw = source.read_bytes()
+        else:
+            encoded = arguments["data_base64"].strip()
+            if not encoded:
+                raise ValueError("data_base64 不能为空")
+            if len(encoded) > ((context.config.max_upload_bytes + 2) // 3) * 4:
+                raise ValueError(f"file exceeds upload limit ({context.config.max_upload_bytes} bytes)")
+            try:
+                raw = base64.b64decode(encoded, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError("data_base64 必须是不带 data: 前缀的有效 Base64") from exc
+            if len(raw) > context.config.max_upload_bytes:
+                raise ValueError(f"file exceeds upload limit ({context.config.max_upload_bytes} bytes)")
         boundary = f"----VideoFreeMCP{uuid.uuid4().hex}"
         head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {media_type}\r\n\r\n").encode()
         body = head + raw + f"\r\n--{boundary}--\r\n".encode()
@@ -416,7 +475,51 @@ async def _tool_result(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         timeout = max(1, min(30, int(arguments.get("timeout", 30))))
         return _text(await _local_api("GET", f"/api/v2/jobs/{arguments.get('job_id', '')}/wait?timeout={timeout}"))
     if name == "get_job_artifacts":
-        return _text(await _local_api("GET", f"/api/v2/jobs/{arguments.get('job_id', '')}/artifacts"))
+        result = await _local_api("GET", f"/api/v2/jobs/{arguments.get('job_id', '')}/artifacts")
+        if allow_local_file_path:
+            artifact_root = context.paths.artifacts.resolve()
+            for item in result.get("items", []) if isinstance(result, dict) else []:
+                if not isinstance(item, dict):
+                    continue
+                candidate = (artifact_root / str(item.get("name", ""))).resolve()
+                if candidate.is_relative_to(artifact_root) and candidate.is_file():
+                    item["local_path"] = str(candidate)
+        return _text(result)
+    if name == "read_job_artifact":
+        result = await _local_api("GET", f"/api/v2/jobs/{arguments.get('job_id', '')}/artifacts")
+        items = result.get("items", []) if isinstance(result, dict) else []
+        index = int(arguments.get("artifact_index", 0))
+        if index < 0 or index >= len(items) or not isinstance(items[index], dict):
+            raise ValueError("artifact_index 超出任务产物范围")
+        offset = int(arguments.get("offset", 0))
+        length = int(arguments.get("length", MAX_ARTIFACT_CHUNK_BYTES))
+        if offset < 0 or not 1 <= length <= MAX_ARTIFACT_CHUNK_BYTES:
+            raise ValueError(f"offset 必须不小于 0，length 必须在 1-{MAX_ARTIFACT_CHUNK_BYTES} 之间")
+        item = items[index]
+        artifact_root = context.paths.artifacts.resolve()
+        candidate = (artifact_root / str(item.get("name", ""))).resolve()
+        if not candidate.is_relative_to(artifact_root) or not candidate.is_file():
+            raise ValueError("任务产物文件不存在或路径无效")
+        size = candidate.stat().st_size
+        if offset > size:
+            raise ValueError("offset 超出任务产物大小")
+        with candidate.open("rb") as handle:
+            handle.seek(offset)
+            chunk = handle.read(length)
+        next_offset = offset + len(chunk)
+        eof = next_offset >= size
+        return _text({
+            "job_id": str(arguments.get("job_id", "")),
+            "artifact_index": index,
+            "name": candidate.name,
+            "media_type": item.get("media_type") or mimetypes.guess_type(candidate.name)[0] or "application/octet-stream",
+            "size": size,
+            "offset": offset,
+            "bytes_read": len(chunk),
+            "data_base64": base64.b64encode(chunk).decode("ascii"),
+            "next_offset": None if eof else next_offset,
+            "eof": eof,
+        })
     if name == "get_job_inputs":
         return _text(await _local_api("GET", f"/api/v2/jobs/{arguments.get('job_id', '')}/inputs"))
     if name == "cancel_job":
@@ -467,7 +570,18 @@ def build_router() -> APIRouter:
             return JSONResponse(_jsonrpc(request_id, {"tools": _tool_definitions()}))
         if method == "tools/call":
             try:
-                return JSONResponse(_jsonrpc(request_id, await _tool_result(str(params.get("name", "")), params.get("arguments") or {})))
+                client_host = request.client.host if request.client else ""
+                try:
+                    client_ip = ipaddress.ip_address(client_host)
+                    allow_local_file_path = client_ip.is_loopback or bool(
+                        client_ip.version == 6 and client_ip.ipv4_mapped and client_ip.ipv4_mapped.is_loopback
+                    )
+                except ValueError:
+                    allow_local_file_path = False
+                return JSONResponse(_jsonrpc(request_id, await _tool_result(
+                    str(params.get("name", "")), params.get("arguments") or {},
+                    allow_local_file_path=allow_local_file_path,
+                )))
             except Exception as exc:
                 return JSONResponse(_jsonrpc(request_id, error={"code": -32000, "message": str(exc)}))
         return JSONResponse(_jsonrpc(request_id, error={"code": -32601, "message": f"Method not found: {method}"}))

@@ -114,6 +114,17 @@ const server = http.createServer((req, res) => {
   // Historical task labels follow declarations, while removed plugins keep their snapshot.
   const { computed, ref } = await import(vueUrl);
   const taskSource = fs.readFileSync(path.join(root,'frontend/src/components/TaskDetailModal.vue'),'utf8');
+  const taskStyle = taskSource.slice(taskSource.indexOf('<style scoped>'));
+  const taskGroups = taskSource.slice(taskSource.indexOf('const groups = computed'),taskSource.indexOf('const isTts ='));
+  assert.match(taskGroups,/type === 'video' && isPostprocess\.value \? t\('原视频'\)/);
+  assert.match(taskSource,/<button v-else type="button" class="task-media-visual task-audio-preview"[\s\S]*?@click="openPreview\(item\)"/);
+  assert.match(taskStyle,/\.task-media-grid\.is-audio \{ grid-template-columns:repeat\(auto-fill,56px\); \}/);
+  assert.match(taskStyle,/\.task-parameter-grid\.task-editor-fields \{ display:grid; grid-template-columns:repeat\(auto-fit,minmax\(min\(100%,220px\),240px\)\); justify-content:end;/);
+  assert.match(taskSource,/const postprocessTask = computed\([\s\S]*?actionDeclaration\.value\.scope === 'resource'/);
+  assert.match(taskSource,/v-if="hasBilingualPrompt" class="task-prompt-tabs"/);
+  assert.match(taskSource,/v-if="hasChinesePrompt"[\s\S]*?\{\{ t\('中文方案'\) \}\}/);
+  assert.match(taskSource,/v-if="hasEnglishPrompt"[\s\S]*?\{\{ t\('英文执行稿'\) \}\}/);
+  assert.match(taskSource,/postprocessTask\.value \? sourceParams\.execution_prompt_en/);
   const labelsSource = taskSource.slice(taskSource.indexOf('const modelLabel ='),taskSource.indexOf('const hasBilingualPrompt'));
   const cap = ref({model_name:'Image model',mode_name:'Text to image',provider_name:'Cloud provider'});
   const generation = ref({model_name:'历史模型',model_version:'v2',mode_name:'历史模式',provider_name:'历史服务'});

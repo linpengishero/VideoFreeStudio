@@ -6,7 +6,7 @@
 
 1. `get_health` -> `list_capabilities` -> `get_capability`，发现图像、视频、分格、配乐、后处理和film-studio合成动作能力。
 2. `create_project` 返回project_id但不切换项目。`submit_generation` 和 `run_plugin_action` 每次明确携带project_id。网关请求没有workspace_id参数；config.workspace_id只是本地运行标识，写入索引binding与台账用于隔离本次运行，不随请求发送。
-3. `upload_reference(filename, data_base64, media_type)` 上传实际文件，取得upload_id；保持图像与音频各自的输入顺序，按能力给role。
+3. `upload_reference` 上传实际文件并取得upload_id：网关同机且实时schema含`file_path`时优先传本机绝对路径；远程连接才使用非空`data_base64`或REST上传。保持图像与音频各自的输入顺序，按能力给role。
 4. `submit_generation` 提交能力ID、prompt、inputs、settings、project_id和幂等键。
 5. 返回job_id后 `get_job`/`wait_job`；完成后 `get_job_artifacts` 下载全部产物，用 `get_job_inputs(job_id)` 保存真实输入回执。实际upload_id和sha256必须与锁定参考一致，不能用请求副本冒充回执。
 6. `list_plugin_actions(scope="resource", source_job_id=任务ID)` 查已完成视频支持的后处理，按实际返回action_id调用 `run_plugin_action`，传 source_job_id、project_id、inputs，保存新任务ID，再等结果与复审。
@@ -45,7 +45,7 @@ H3执行稿使用subject_definitions、summary、retention_analysis、detailed_d
    声音参考与定版图同在references闸门前定版：每个说话角色按asset_manifest的voice计划处理——`generated` 用 run_plugin_action 的 speech_describe/speech_preset（先查ready）生成示例文本音频，`provided` 复制用户文件到run_root；下载后听检（intelligibility/identity/quality）通过才上传，收录 `media_progress.voices`。同一角色全片只用同一声音参考，不得混用他人音色或中途换预设。
 3. 主制片读取已审storyboard_groups.yaml里的构图、动作、视线、机位及连续性，绑定定版图实际上传ID；不重新派分镜子智能体策划。四宫格实际输入顺序为场景、按镜头顺序收集的全部可见角色角色板和required_assets，重复去除。`image.qwen.storyboard_4`不消费`settings.shots`，四条有序storyboard_prompt必须由guarded_mcp按shot_ids顺序嵌入单一prompt（Panel 1至4对应左上、右上、左下、右下），不使用video_prompts里的视频执行稿；超过8张参考须前期重排分组，禁止少传。可一次提交2–4张四宫格候选，集中做一轮完整图像QA，选中一张后运行grids闸门，再切格。
 4. `image.split`每个网格只切割一次，按左上、右上、左下、右下映射shot_id。切割是确定性操作，不对同一网格的四个子图重复做完整图像QA；校验四文件非空及哈希、父网格哈希、索引顺序、上传ID与实际输入回执，然后运行storyboard闸门。未经此闸门，不提交任何H3任务。
-5. 每镜提交compile，解决needs_input；保存就绪回执，运行compiled闸门后才按授权确认。返回job_id后保存输入回执、下载、视频QA；通过media后可二采，选定版本并通过selected才进入剪辑。
+5. 每镜提交compile，解决needs_input；保存就绪回执，运行compiled闸门后才按授权确认。返回job_id后保存输入回执、下载，先运行`python <skill_root>/scripts/tech_scan.py video <file> --out qa/scan_<shot_id>.json`生成客观扫描并存入记录的`tech_scan`，再做视频QA：全片≥2fps密集抽帧，扫描离群点在anomalies_reviewed逐条给结论；通过media后可二采，选定版本并通过selected才进入剪辑。
 
 闸门的证据字段与命令见[生产合同](preproduction.md)。任一步失败，只回退受影响产物，并使受影响下游证据失效。草稿、定版图、四宫格、单格都必须下载保存；不得用资产ID、文字计划或捏造PASS替代文件。
 
@@ -59,7 +59,11 @@ H3执行稿使用subject_definitions、summary、retention_analysis、detailed_d
 
 常规草稿优先发现可用480P预览模式，通过QA后按config.refine决定是否二采。**长镜允许二采，不设8秒禁令，不硬编码15秒上限。** 需要源latent的H3操作以list_plugin_actions带source_job_id的实际可用性为准；缺latent报告具体原因，不能改用其他放大器冒充H3二采。
 
-同一镜头可继续二采，记录完整父子任务链；不要无限循环，遵守用户授权的二采次数和预算。LTX2.5仅在能力可用且制作计划批准时使用；先确认声音保留策略。所有二采产物重新检查故事信息、动作连续性及适用的对白/声音，关键情节丢失不能放行。
+同一镜头可继续二采，记录完整父子任务链；不要无限循环，遵守用户授权的二采次数和预算。LTX2.5仅在能力可用且制作计划批准时使用；先确认声音保留策略。
+
+二采是父稿同一内容的续采/重采样，内容由父稿决定，因此不做整片media重审，改做refine轻量QA三项：`audio_track`（音轨保留、适用台词完整）、`loudness`（与父稿均值响度偏差不超过3dB，闸门从双方tech_scan自动对比）、`artifacts`（无新增伪影，自身tech_scan离群点逐条复核）。记录同样需要tech_scan附件，报告用`validate.py qa --stage refine`放行，frame_sampling≥1fps即可；纯silent镜头audio_track/loudness可N/A。关键情节丢失仍是阻断FAIL，不能放行。
+
+链式二采顺序与风险：先用`list_plugin_actions(scope="resource", source_job_id=...)`读取动作语义再排链。H3 latent类二采（h3_refine一类）需要把父视频回灌ComfyUI重建latent，长镜头（约8秒以上）显存开销大、可能压垮执行端并令任务卡死；latent类二采在前，LTX/放大类后处理最后执行，后处理产物一般不能再作H3 latent二采的父任务，实际以返回的动作清单为准。崩溃后先确认父任务已终态，再按授权上限单次重试，不要对同一镜头堆叠并行二采。闸门校验父子链、哈希与响度偏差，但不理解能力语义，链式顺序按本节纪律执行。
 
 成功二采记录进refinements，保留get_job的completed父子回执及文件哈希和复审；失败尝试只留台账。不覆盖videos初稿。selected明确记录每镜最终选用的job_id；即使不二采也必须选中审核过的初稿。
 

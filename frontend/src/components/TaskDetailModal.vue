@@ -27,9 +27,14 @@ const actionCheckedTask = ref('');
 const actionLoadError = ref('');
 const capability = computed(() => (props.capabilities || []).find(item => item.id === (props.manifest?.parameters?.params?.capability_id || props.manifest?.parameters?.generation?.capability_id)));
 const actionTask = computed(() => Boolean(actionDeclaration.value));
+const postprocessTask = computed(() => Boolean(
+  capability.value?.operation === 'postprocess'
+  || (actionDeclaration.value && actionDeclaration.value.scope === 'resource'),
+));
 const actionSnapshotPresent = computed(() => Object.hasOwn(props.manifest?.parameters?.generation || {}, 'action_inputs'));
 const editUiDeclaration = computed(() => actionDeclaration.value?.ui || capability.value?.ui || {});
 const actionTextField = computed(() => actionTask.value
+  && !postprocessTask.value
   ? (editUiDeclaration.value.fields || []).find(field => ['textarea','text'].includes(field.component) || ['prompt','text'].includes(field.bind))
   : null);
 const editFields = computed(() => (editUiDeclaration.value.fields || []).filter(field =>
@@ -38,6 +43,11 @@ const editUi = computed(() => editUiDeclaration.value.edit || {});
 const promptEditUi = computed(() => editUi.value.prompt === false ? {visible:false} : editUi.value.prompt || {});
 const showPromptEditor = computed(() => actionTask.value ? Boolean(actionTextField.value || actionPrompt.value) : promptEditUi.value.visible !== false);
 const actionPrompt = computed(() => {
+  if (postprocessTask.value) {
+    return promptLanguage.value === 'en'
+      ? draft.value.promptEn || draft.value.promptZh
+      : draft.value.promptZh || draft.value.promptEn;
+  }
   const sourceParameters = actionSourceManifest.value?.parameters || {};
   const sourceParams = sourceParameters.params || {};
   const values = [sourceParams.confirmed_prompt_zh, sourceParams.execution_prompt_en, sourceParams.source_prompt,
@@ -48,7 +58,7 @@ const promptValue = computed({
   get: () => actionTask.value ? actionPrompt.value : activePrompt.value,
   set: value => { if (!actionTask.value) activePrompt.value = value; },
 });
-const promptLabel = computed(() => actionTask.value ? actionTextField.value?.label || t('原始提示词') : promptEditUi.value.label || (isTts.value ? t('生成文本') : isMusic.value ? t('音乐描述') : t('描述词')));
+const promptLabel = computed(() => actionTask.value ? (postprocessTask.value ? t('原始提示词') : actionTextField.value?.label || t('原始提示词')) : promptEditUi.value.label || (isTts.value ? t('生成文本') : isMusic.value ? t('音乐描述') : t('描述词')));
 const parametersLabel = computed(() => editUi.value.parameters?.label || (actionTask.value ? t('动作参数') : editFields.value.length ? t('生成参数') : t('任务信息')));
 const conversionModes = computed(() => (capability.value?.processing_modes || []).filter(mode => mode.id !== 'direct'));
 const emit = defineEmits(["close", "regenerate", "translate", "resource-changed", "process"]);
@@ -90,7 +100,7 @@ const groups = computed(() =>
   ["image", "video", "audio"]
     .map((type) => ({
       type,
-      label: labels[type],
+      label: type === 'video' && isPostprocess.value ? t('原视频') : `${labels[type]}${t('素材')}`,
       items: (props.manifest?.inputs || []).filter(item => item.type === type && !removed.value[key(item)]),
     }))
     .filter((group) => group.items.length),
@@ -138,10 +148,17 @@ const summaryItems = computed(() => {
   };
   return items.filter(item => values[item.source]).map(item => ({...item, value:values[item.source]}));
 });
-const hasBilingualPrompt = computed(() => {
+const hasChinesePrompt = computed(() => {
   const params = props.manifest?.parameters?.params || {};
-  return Boolean(params.confirmed_prompt_zh || params.execution_prompt_en);
+  const sourceParams = actionSourceManifest.value?.parameters?.params || {};
+  return Boolean(params.confirmed_prompt_zh || sourceParams.confirmed_prompt_zh);
 });
+const hasEnglishPrompt = computed(() => {
+  const params = props.manifest?.parameters?.params || {};
+  const sourceParams = actionSourceManifest.value?.parameters?.params || {};
+  return Boolean(params.execution_prompt_en || sourceParams.execution_prompt_en);
+});
+const hasBilingualPrompt = computed(() => hasChinesePrompt.value && hasEnglishPrompt.value);
 const activePrompt = computed({
   get: () =>
     promptLanguage.value === "en" ? draft.value.promptEn : draft.value.promptZh,
@@ -228,14 +245,34 @@ function resetDraft() {
   conversionChoiceOpen.value = false;
   const parameters = props.manifest?.parameters || {};
   const params = parameters.params || {};
+  const sourceParameters = actionSourceManifest.value?.parameters || {};
+  const sourceParams = sourceParameters.params || {};
   const firstText = (...values) =>
     values.find((value) => typeof value === "string" && value.trim()) || "";
   const options = resolutionOptions.value;
   draft.value = {
     promptZh:
-      firstText(params.confirmed_prompt_zh, params.source_prompt, parameters.text, parameters.prompt),
+      firstText(
+        postprocessTask.value ? sourceParams.confirmed_prompt_zh : '',
+        params.confirmed_prompt_zh,
+        postprocessTask.value ? sourceParams.source_prompt : '',
+        params.source_prompt,
+        postprocessTask.value ? sourceParameters.text : '',
+        parameters.text,
+        postprocessTask.value ? sourceParameters.prompt : '',
+        parameters.prompt,
+      ),
     promptEn:
-      firstText(params.execution_prompt_en, parameters.prompt, parameters.text, params.source_prompt),
+      firstText(
+        postprocessTask.value ? sourceParams.execution_prompt_en : '',
+        params.execution_prompt_en,
+        postprocessTask.value ? sourceParameters.prompt : '',
+        parameters.prompt,
+        postprocessTask.value ? sourceParameters.text : '',
+        parameters.text,
+        postprocessTask.value ? sourceParams.source_prompt : '',
+        params.source_prompt,
+      ),
     instruction: parameters.instruction ?? "",
     lyrics: params.lyrics ?? "",
     duration_seconds: Number(parameters.duration_seconds || 5),
@@ -249,7 +286,9 @@ function resetDraft() {
     speed: params.speed || "normal",
   };
   originalChinesePrompt.value = draft.value.promptZh;
-  promptLanguage.value = hasBilingualPrompt.value ? "zh" : "en";
+  promptLanguage.value = postprocessTask.value
+    ? draft.value.promptEn ? "en" : "zh"
+    : hasBilingualPrompt.value ? "zh" : hasChinesePrompt.value && !hasEnglishPrompt.value ? "zh" : "en";
   formValues.value = defaults(actionDeclaration.value?.ui || capability.value?.ui);
   Object.assign(formValues.value.settings, params.api_settings || {});
   Object.assign(formValues.value.parameters, params.plugin_parameters || {});
@@ -423,9 +462,7 @@ onBeforeUnmount(clearReplacementUrls);
             :key="group.type"
             class="task-detail-section"
           >
-            <h3>
-              {{ group.label }}{{ t('素材') }}<small>{{ group.items.length }}</small>
-            </h3>
+            <h3>{{ group.label }}<small>{{ group.items.length }}</small></h3>
             <div class="task-media-grid" :class="`is-${group.type}`">
               <article
                 v-for="item in group.items"
@@ -453,12 +490,12 @@ onBeforeUnmount(clearReplacementUrls);
                     ><Icon icon="solar:play-bold" width="18"
                   /></i>
                 </button>
-                <div v-else class="task-audio-preview">
+                <button v-else type="button" class="task-media-visual task-audio-preview" :title="t('放大播放')" :aria-label="t('试听{v0}', undefined, {v0: item.name || t('音频')})" @click="openPreview(item)">
                   <span
                     ><Icon icon="solar:music-note-3-bold" width="17"
                   /></span>
-                  <audio :src="source(item)" controls preload="metadata" />
-                </div>
+                  <i><Icon icon="solar:play-bold" width="12" /></i>
+                </button>
                 <b v-if="replacements[key(item)]" class="task-media-replaced"
                   >{{ t('已重传') }}</b
                 >
@@ -506,8 +543,9 @@ onBeforeUnmount(clearReplacementUrls);
             <template v-else>
             <div class="task-prompt-heading">
               <h3>{{ promptLabel }}</h3>
-              <div v-if="!actionTask && hasBilingualPrompt" class="task-prompt-tabs" role="tablist">
+              <div v-if="hasBilingualPrompt" class="task-prompt-tabs" role="tablist">
                 <button
+                  v-if="hasChinesePrompt"
                   type="button"
                   role="tab"
                   :aria-selected="promptLanguage === 'zh'"
@@ -515,6 +553,7 @@ onBeforeUnmount(clearReplacementUrls);
                   @click="promptLanguage = 'zh'"
                 >{{ t('中文方案') }}</button>
                 <button
+                  v-if="hasEnglishPrompt"
                   type="button"
                   role="tab"
                   :aria-selected="promptLanguage === 'en'"
@@ -637,11 +676,11 @@ onBeforeUnmount(clearReplacementUrls);
 
 .task-editor-modal .task-detail-body { padding:0 20px 16px; }
 
-.task-editor-modal .task-detail-section { padding:16px 0; border-bottom:0; }
+.task-editor-modal .task-detail-section { padding:9px 0; border-bottom:0; }
 
-.task-media-grid { display:grid; grid-template-columns:repeat(auto-fill,68px); gap:7px; justify-content:start; }
+.task-media-grid { display:grid; grid-template-columns:repeat(auto-fill,56px); gap:6px; justify-content:start; }
 
-.task-media-grid.is-audio { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.task-media-grid.is-audio { grid-template-columns:repeat(auto-fill,56px); }
 
 .task-media-card { position:relative; min-width:0; overflow:hidden; border:1px solid #ffffff18; border-radius:8px; background:#131516; transition:border-color .16s ease,transform .16s ease; }
 
@@ -649,7 +688,7 @@ onBeforeUnmount(clearReplacementUrls);
 
 .task-media-card.is-replaced { border-color:#b7f34a80; box-shadow:inset 0 0 0 1px #b7f34a16; }
 
-.task-media-visual { position:relative; display:grid; place-items:center; width:100%; height:68px; overflow:hidden; padding:0; background:#0c0e0f; color:#fff; }
+.task-media-visual { position:relative; display:grid; place-items:center; width:100%; height:56px; overflow:hidden; padding:0; background:#0c0e0f; color:#fff; }
 
 .task-media-visual img,.task-media-visual video { display:block; width:100%; height:100%; object-fit:contain; background:#0c0e0f; }
 
@@ -667,11 +706,11 @@ onBeforeUnmount(clearReplacementUrls);
 
 .task-media-actions input { display:none; }
 
-.task-audio-preview { display:grid; grid-template-columns:30px minmax(0,1fr); align-items:center; gap:8px; min-height:76px; padding:10px 44px 10px 10px; background:#111314; }
+.task-audio-preview { position:relative; display:grid; place-items:center; width:56px; height:56px; padding:0; background:#0c0e0f; color:#dce1d9; cursor:pointer; }
 
-.task-audio-preview > span { display:grid; place-items:center; width:30px; height:30px; border-radius:7px; background:#b7f34a12; color:var(--lime); }
+.task-audio-preview > span { display:grid; place-items:center; width:34px; height:34px; border-radius:9px; background:#b7f34a12; color:var(--lime); }
 
-.task-audio-preview audio { width:100%; min-width:0; height:30px; color-scheme:dark; }
+.task-audio-preview > i { position:absolute; right:5px; bottom:5px; display:grid; place-items:center; width:22px; height:22px; border:1px solid #ffffff40; border-radius:50%; background:#080a0bd9; color:#fff; font-style:normal; }
 
 .task-prompt-editor textarea { display:block; width:100%; min-height:190px; max-height:380px; padding:14px 15px; resize:vertical; outline:0; border:1px solid #ffffff1b; border-radius:8px; background:#111314; color:#dce1da; font-size:12px; line-height:1.7; scrollbar-width:thin; scrollbar-color:#474c47 transparent; }
 .task-primary-action-field { display:block; width:100%; }
@@ -812,9 +851,9 @@ onBeforeUnmount(clearReplacementUrls);
 
   .task-editor-modal .task-detail-body { padding:0 13px 13px; }
 
-  .task-media-grid { grid-template-columns:repeat(auto-fill,64px); }
+  .task-media-grid { grid-template-columns:repeat(auto-fill,52px); }
 
-  .task-media-grid.is-audio { grid-template-columns:1fr; }
+  .task-media-grid.is-audio { grid-template-columns:repeat(auto-fill,52px); }
 
   .task-parameter-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 
@@ -851,7 +890,7 @@ onBeforeUnmount(clearReplacementUrls);
 .task-generation-summary > div { display:flex; gap:8px; min-width:0; align-items:baseline; }
 .task-generation-summary dt { color:#8d969f; font-size:12px; flex-shrink:0; }
 .task-generation-summary dd { margin:0; color:#dce2e8; font-size:12px; overflow-wrap:anywhere; }
-.task-parameter-grid.task-editor-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+.task-parameter-grid.task-editor-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),240px)); justify-content:start; gap:16px; }
 .task-editor-fields :deep(.plugin-field), .task-editor-fields :deep(.plugin-field label) { display:flex; flex-direction:column; align-items:stretch; gap:7px; width:100%; min-width:0; }
 .task-editor-fields :deep(.field-label), .task-editor-fields :deep(label > span) { color:#9da7b1; font-size:12px; }
 .task-editor-fields :deep(.select-menu) { width:100%; min-width:0; }
@@ -861,6 +900,6 @@ onBeforeUnmount(clearReplacementUrls);
 .task-editor-fields :deep(.field-checkbox label) { flex-direction:row; align-items:center; justify-content:space-between; min-height:36px; }
 .task-editor-fields :deep(.select-popover) { max-width:min(300px,calc(100vw - 64px)); }
 .task-editor-modal footer > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-@media (max-width: 680px) { .task-parameter-grid.task-editor-fields { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; } }
+@media (max-width: 680px) { .task-parameter-grid.task-editor-fields { grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),220px)); justify-content:start; gap:12px; } }
 @media (max-width: 600px) { .task-editor-modal footer { flex-wrap: wrap; gap: 12px; } .task-editor-modal footer > div { width: 100%; } }
 </style>

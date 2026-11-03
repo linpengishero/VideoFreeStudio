@@ -511,10 +511,10 @@ class PluginTests(unittest.TestCase):
         catalog = PluginCatalog(ROOT / 'plugins')
         plugins, errors = catalog.scan()
         self.assertEqual(errors, [])
-        self.assertEqual(len(plugins), 14)
-        self.assertEqual(catalog.public()['applications'][0]['id'], 'film-studio')
+        self.assertEqual(len(plugins), 16)
+        self.assertIn('film-studio', [item['id'] for item in catalog.public()['applications']])
         self.assertIn('ai-project-progress', [item['id'] for item in catalog.public()['project_tools']])
-        self.assertEqual(sum(len(p['capabilities']) for p in plugins), 35)
+        self.assertEqual(sum(len(p['capabilities']) for p in plugins), 36)
         registry = WorkflowRegistry(ROOT / 'plugins', lambda names: {})
         for plugin in plugins:
             for key, config in plugin['capabilities'].items():

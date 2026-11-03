@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { chromium } = require('playwright');
+const { chromium } = require('../frontend/node_modules/playwright');
 
 (async () => {
   const root = path.resolve(__dirname, '../frontend');
@@ -20,9 +20,11 @@ const { chromium } = require('playwright');
         import SelectMenu from '/src/components/SelectMenu.vue';
         import PluginView from '/src/components/PluginView.vue';
         import Preview from '/src/components/MediaPreview.vue';
+        import { setLocale } from '/src/services/i18n.js';
         import { confirmAction } from '/src/services/confirmations.js';
         import { readMediaBlob, gateway } from '/src/services/api.js';
         import '/src/ui.css';
+        setLocale('zh-CN');
         const open=ref(false), nested=ref(false), busy=ref(false), host=ref(true), media=ref(null);
         const loader=shallowRef(null), selected=ref('1');
         const options=Array.from({length:20},(_,i)=>({value:String(i),label:'Option '+i}));

@@ -67,7 +67,7 @@ bootstrap / lifecycle -> all application modules
 操作栏层级由插件 `ui_models` 声明：主分类、模型、左上角生成子功能；设置绑定当前子功能的能力声明。右侧提示词处理模式与子功能平级且独立，框架不维护模型子菜单列表。
 HTTP v2 与 MCP 共用能力目录和提交入口，不给每个插件复制路由或 MCP 工具。
 系统 LLM、协作会话、进度及跨插件能力/动作调用通过 `PluginRuntime` 作为稳定框架接口提供给插件；跨插件调用仍经过能力与动作目录、项目归属、Schema 校验和统一任务队列，插件不得导入其他插件代码、读取系统数据库或 LLM 密钥。插件专属配置由 `plugin.json.settings` 声明、设置页按插件切换，并保存到 `data/plugin-settings/`；系统配置仍归 settings 数据库。
-系统级外部服务适配归 `backend/integrations/system_services/`，不得伪装成生成插件。`SystemServiceRegistry` 按清单发现 Provider、校验操作输入输出并隔离加载错误；插件通过 `PluginRuntime.call_system_service` 调用，不读取设置或实现。流式 ComfyUI/Storage 继续使用类型化门面。协议见 [docs/system-service-protocol.md](docs/system-service-protocol.md)。
+系统级外部服务适配归 `backend/integrations/system_services/`，不得伪装成生成插件。`SystemServiceRegistry` 按清单发现 Provider、校验操作输入输出并隔离加载错误；插件通过 `PluginRuntime.call_system_service` 调用，不读取设置或实现。硬件服务按需返回网关主机的 CPU、内存和可探测 GPU 快照；字段探测不到时返回 `null`，不做性能评分或工作流决策。流式 ComfyUI/Storage 继续使用类型化门面。协议见 [docs/system-service-protocol.md](docs/system-service-protocol.md)。
 插件业务通过 plugin.json 顶层 actions 声明用途、输入 Schema、自动化可见性和处理器；generation/actions 负责统一校验、项目归属、源素材适配和任务调度，专用实现归插件。HTTP/MCP 只提供固定的动作发现、详情和执行入口；声音生成、二采与译稿均走此入口。旧模型生成、专用 TTS、refine、H3 翻译和 studio 协作 URL 已移除，不提供重定向或回退。项目、上传、任务、当前协作生命周期和系统服务仍归框架，不因 URL 含 v1 而废弃。
 排队任务与协作保存插件版本快照，插件文件发生变化后拒绝继续执行旧任务；更新插件应先排空任务。
 插件修订指纹使用清单和源码、文档及声明资源的内容哈希，不依赖安装或复制后的文件时间。执行中的任务由 ApplicationContext.executing_jobs 跟踪，取消状态不代表执行器已退出；删除、切换存储目录必须等待执行器退出，归档阶段拒绝取消。

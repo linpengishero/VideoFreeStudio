@@ -59,9 +59,19 @@ class CollaborationReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['status'], 'needs_input')
         self.assertTrue(result['questions'])
         model.assert_called_once()
-        with patch.object(service, 'call_agent_model', return_value='invalid again'):
+        with patch.object(service, 'call_agent_model', return_value='invalid again') as model:
             with self.assertRaises(ValueError):
                 service.repair_agent_result([], parse_agent_result('invalid'), 'qwen', 'create')
+        self.assertEqual(model.call_count, 2)
+
+    def test_second_repair_sees_first_failed_repair(self):
+        responses = ['invalid repair', json.dumps(READY)]
+        with patch.object(service, 'call_agent_model', side_effect=responses) as model:
+            result = service.repair_agent_result([], parse_agent_result('invalid'), 'qwen', 'create')
+        self.assertEqual(result['status'], 'ready')
+        self.assertEqual(model.call_args_list[1].args[0][-2], {
+            'role': 'assistant', 'content': 'invalid repair',
+        })
 
     def test_valid_questions_do_not_trigger_prompt_repair(self):
         with patch.object(service, 'call_agent_model') as model:

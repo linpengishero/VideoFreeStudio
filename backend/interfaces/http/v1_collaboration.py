@@ -51,10 +51,12 @@ async def _enqueue_existing_agent_collaboration(collaboration_id: str, request: 
     previous = item.get("request", {})
     source_request = previous.get("params", {}).get("_source_request", previous) if isinstance(previous, dict) else {}
     payload.setdefault("params", {})["_source_request"] = source_request
-    context.db.update_collaboration(collaboration_id, {
+    updated = context.db.update_collaboration(collaboration_id, {
         "status": "queued", "request": payload, "error": None, "completed_at": None,
         "result": {key: value for key, value in item.get("result", {}).items() if key != "enqueue_failed"},
-    })
+    }, expected_statuses=(item["status"],))
+    if not updated or updated.get("status") != "queued":
+        raise HTTPException(409, "当前会话已结束或正在处理")
     context.db.save_collaboration_turn(request_id, collaboration_id)
     context.agent_queue.put_nowait(collaboration_id)
     return context.db.collaboration(collaboration_id)
@@ -73,8 +75,9 @@ async def cancel_existing_agent_collaboration(collaboration_id: str) -> dict[str
         item = context.db.update_collaboration(collaboration_id, {
             "status": "cancelled", "completed_at": time.time(),
             "progress": {**(item.get("progress") or {}), "status": "cancelled", "updated_at": time.time()},
-        })
-        close_agent_connection(collaboration_id)
+        }, expected_statuses=("queued", "running", "needs_input", "awaiting_confirmation"))
+        if item and item.get("status") == "cancelled":
+            close_agent_connection(collaboration_id)
     return item
 
 async def delete_existing_agent_collaboration(collaboration_id: str) -> bool:

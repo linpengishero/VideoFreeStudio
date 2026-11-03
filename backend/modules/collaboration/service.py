@@ -153,16 +153,21 @@ def repair_agent_result(messages: list[dict[str, Any]], result: dict[str, Any], 
         issues.append("needs_input requires at least one question with text and selectable options")
     if not issues:
         return result
-    correction = {"role": "user", "content": "Your response failed this executable contract: " + "; ".join(issues) + ". Return the same JSON contract again. If clarification is needed, return needs_input with questions containing text and selectable options. Otherwise return ready with complete optimized_prompt and optimized_prompt_zh for the active mode. Keep the user's intent and reference mapping. Do not use ellipses, placeholders, or unfinished text. Return JSON only."}
-    repaired = parse_agent_result(call_agent_model(messages + [correction], 7000))
-    if repaired.get("status") == "needs_input" and repaired.get("questions"):
-        return repaired
-    repaired_issues = prompt_issues(repaired.get("optimized_prompt", ""))
-    if not repaired.get("optimized_prompt_zh"):
-        repaired_issues.append("missing optimized_prompt_zh")
-    if repaired.get("status") != "ready" or repaired_issues:
-        raise ValueError("智能协作生成的最终提示词未通过格式校验：" + "; ".join(repaired_issues or issues))
-    return repaired
+    repair_messages = list(messages)
+    for _ in range(2):
+        correction = {"role": "user", "content": "Your response failed this executable contract: " + "; ".join(issues) + ". Return the same JSON contract again. If clarification is needed, return needs_input with questions containing text and selectable options. Otherwise return ready with complete optimized_prompt and optimized_prompt_zh for the active mode. Keep the user's intent and reference mapping. Do not use ellipses, placeholders, or unfinished text. Return JSON only."}
+        repaired_content = call_agent_model(repair_messages + [correction], 7000)
+        repaired = parse_agent_result(repaired_content)
+        if repaired.get("status") == "needs_input" and repaired.get("questions"):
+            return repaired
+        repaired_issues = prompt_issues(repaired.get("optimized_prompt", ""))
+        if not repaired.get("optimized_prompt_zh"):
+            repaired_issues.append("missing optimized_prompt_zh")
+        if repaired.get("status") == "ready" and not repaired_issues:
+            return repaired
+        issues = repaired_issues or issues
+        repair_messages.extend([correction, {"role": "assistant", "content": repaired_content}])
+    raise ValueError("智能协作生成的最终提示词未通过格式校验：" + "; ".join(issues))
 
 
 def initial_agent_message(request: AgentChatRequest) -> list[dict[str, Any]]:

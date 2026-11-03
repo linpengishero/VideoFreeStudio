@@ -187,6 +187,7 @@ async def handle(request: AgentChatRequest, runtime):
         content = await asyncio.to_thread(runtime.call_model, session["messages"], max_tokens)
         result = parse_agent_result(content)
         result = normalize_reference_mode_questions(result, session.get("mode", request.mode), session.get("generation"))
+        session["messages"].append({"role": "assistant", "content": content})
         result = await asyncio.to_thread(
             runtime.repair_result,
             session["messages"],
@@ -198,7 +199,6 @@ async def handle(request: AgentChatRequest, runtime):
         if session.get("submission_capability_id"):
             result["generation_payload"] = {**result.get("generation_payload", {}),
                                              "capability_id": session["submission_capability_id"]}
-        session["messages"].append({"role": "assistant", "content": content})
         runtime.update_progress(progress_id, stage_id, "completed", "H3 提示词转换已完成" if stage_id == "quick_convert" else "提示词方案已完成")
         runtime.finish_progress(progress_id, "completed" if result.get("status") == "ready" else "awaiting_input")
         return {"session_id": session["id"], "progress_id": progress_id, **result}

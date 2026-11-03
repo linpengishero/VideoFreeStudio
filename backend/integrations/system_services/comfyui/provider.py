@@ -56,6 +56,32 @@ class Provider:
                 continue
         return False
 
+    def system_stats(self) -> dict[str, Any]:
+        """Return normalized device and VRAM information from ComfyUI."""
+        payload = self.request("/system_stats")
+        if not isinstance(payload, dict):
+            raise ValueError("ComfyUI returned invalid system statistics")
+        system = payload.get("system") if isinstance(payload.get("system"), dict) else {}
+        devices = payload.get("devices")
+        if not isinstance(devices, list):
+            raise ValueError("ComfyUI system statistics did not include devices")
+        normalized = []
+        for device in devices:
+            if not isinstance(device, dict):
+                continue
+            normalized.append({
+                "name": str(device.get("name") or "Unknown device"),
+                "type": str(device.get("type") or "unknown"),
+                "index": device.get("index") if isinstance(device.get("index"), int) else None,
+                "total_memory_bytes": device.get("vram_total") if isinstance(device.get("vram_total"), int) else None,
+                "free_memory_bytes": device.get("vram_free") if isinstance(device.get("vram_free"), int) else None,
+            })
+        return {
+            "scope": "comfyui_host",
+            "devices": normalized,
+            "comfyui_version": str(system.get("comfyui_version") or "") or None,
+        }
+
     def node_definitions(self, kinds: Iterable[str], aliases: dict[str, str]) -> dict[str, Any]:
         ignored = {
             "Note", "MarkdownNote", "Label (rgthree)", "AboutAuthorNode|Mie",

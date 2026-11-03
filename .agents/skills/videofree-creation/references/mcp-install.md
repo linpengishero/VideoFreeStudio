@@ -43,11 +43,11 @@
 
 1. 先调用 `get_health`、`list_capabilities`、`get_capability`，根据实际返回选择能力、模式、素材角色、比例和分辨率，不猜参数。
 2. 项目归属：调用 `create_project`，保存返回的项目 ID；后续 `submit_generation` 显式携带 `project_id`。创建项目不会自动切换项目。不带项目 ID 时沿用当前项目。系统是单用户单安装，不支持 `workspace_id`。
-3. 参考素材先用 `upload_reference` 上传，再把返回的 `upload_id` 放入 `inputs`。不要传网关电脑本机路径。
+3. 参考素材先用 `upload_reference` 上传，再把返回的 `upload_id` 放入 `inputs`。只有通过网关本机 `127.0.0.1`/`::1` 连接时才能传 `file_path`；局域网客户端使用 Base64 或 REST 上传。
 4. 统一生成入口为 `submit_generation`。`prompt_processing=direct` 直接生成；`compile` 检查并忠实转换描述词；`director` 进行完整导演协作。不要为了绕过编译或追问另起直提任务。
 5. 返回 `job_id` 后查询任务。返回协作会话时查询该会话；`needs_input` 时向同一个 `submit_generation` 传 `session_id`、`answer` 回答问题。
 6. `awaiting_confirmation` 时展示方案，取得用户明确批准后再用 `confirm_collaboration`，传会话 ID 和当前 `revision`。不要自动确认。`get_final_prompt` 可读取双语确认稿。
-7. 用 `get_job` 或 `wait_job` 等待；完成后调用 `get_job_artifacts` 获取所有文件。单次等待最多 120 秒，等待超时不代表失败，也不会取消任务。不要因此重复提交。
+7. 用 `get_job` 或 `wait_job` 等待；完成后调用 `get_job_artifacts` 获取产物清单，再通过 URL 或 `read_job_artifact` 获取文件。单次等待最多 30 秒，等待超时不代表失败，也不会取消任务。不要因此重复提交。
 8. 二采和其他后处理先调用 `list_plugin_actions(scope="resource", source_job_id=任务ID)`，只执行返回的 action_id，使用 `run_plugin_action` 传 source_job_id 和符合 input_schema 的 inputs，拿到 job_id 后再等新任务。不要猜 H3 二采是否可用。`regenerate_job` 创建新版本，不删除原任务；修改双语执行稿时同时传匹配的中英文。
 9. 不修改或删除预设，不删除项目或资源，不直接调用 ComfyUI，不传节点 ID、工作流路径或模型文件路径。取消任务需符合用户授权。
 
@@ -64,6 +64,16 @@
 ```
 
 上例传给 `create_project`。上传图像时调用 `upload_reference`：
+
+网关同机客户端优先使用：
+
+```json
+{
+  "file_path": "C:/media/character.png"
+}
+```
+
+远程客户端使用：
 
 ```json
 {
@@ -123,13 +133,13 @@
 | 上传与生成，2个 | `upload_reference`、`submit_generation` |
 | 插件动作，3个 | `list_plugin_actions`、`get_plugin_action`、`run_plugin_action` |
 | 协作，7个 | `create_director_collaboration`、`get_collaboration`、`send_collaboration_message`、`get_final_prompt`、`confirm_collaboration`、`list_collaborations`、`cancel_collaboration` |
-| 任务与结果，6个 | `list_jobs`、`get_job`、`wait_job`、`get_job_artifacts`、`get_job_inputs`、`cancel_job` |
+| 任务与结果，7个 | `list_jobs`、`get_job`、`wait_job`、`get_job_artifacts`、`read_job_artifact`、`get_job_inputs`、`cancel_job` |
 | 重生成，1个 | `regenerate_job` |
 | 项目分类，3个 | `list_project_categories`、`create_project_category`、`update_project_category` |
 | 素材及公共资产，5个 | `list_library`、`list_public_assets`、`create_public_asset`、`update_public_asset`、`attach_public_asset_media` |
 | 插件发现，2个 | `list_plugins`、`list_plugin_presets` |
 
-共 42 个工具，实际参数以实时 `tools/list` 为准；不存在 `workspace_id`。项目删除、资源清空和系统密钥管理不对 AI 开放。
+共 43 个工具，实际参数以实时 `tools/list` 为准；不存在 `workspace_id`。项目删除、资源清空和系统密钥管理不对 AI 开放。
 
 新请求优先使用统一生成入口；`create_director_collaboration` 和 `send_collaboration_message` 为已有协作客户端保留，不必两条路径混用。
 
@@ -137,7 +147,7 @@
 
 工具正常响应的 `content` 中包含 `type=text` 项，其 `text` 是 JSON 字符串，需要解析后读取任务或产物字段。JSON-RPC 返回 `error` 时不能当作成功提交。
 
-用 `get_job_artifacts` 返回的 URL 下载图片、视频、音频等所有产物。若 URL 是相对路径，以 `http://192.168.50.8:8765` 拼接，不要拼客户端的 localhost，也不要把网关磁盘路径当下载地址。完成任务的最终文件由网关归档到项目资源库，AI 不需要同步 ComfyUI 输出目录。
+有 HTTP 下载能力时，用 `get_job_artifacts` 返回的 URL 下载图片、视频、音频等所有产物。若 URL 是相对路径，以网关实际地址（例如 `http://192.168.50.8:8765`）拼接，不要拼客户端的 localhost。仅通过 MCP 连接时，调用 `read_job_artifact(job_id, artifact_index, offset, length)`，Base64 解码每一块并按 `next_offset` 继续，直到 `eof=true`；单块最大 1 MiB。远程调用不会返回网关磁盘路径。完成任务的最终文件由网关归档到项目资源库，AI 不需要同步 ComfyUI 输出目录。
 
 ## 7. 连接诊断
 

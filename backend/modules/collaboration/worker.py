@@ -89,18 +89,21 @@ async def process_agent_collaboration(collaboration_id: str) -> None:
         session_state = context.agent_sessions.pop(internal_session_id, {}) if internal_session_id else {}
         status = "awaiting_confirmation" if result.get("status") == "ready" else "needs_input"
         message = str(result.get("optimized_prompt_zh") or result.get("message") or "智能协作已完成").strip()
-        context.db.add_collaboration_message(collaboration_id, "assistant", message)
-        context.db.update_collaboration(collaboration_id, {
+        saved = context.db.update_collaboration(collaboration_id, {
             "status": status, "result": result, "state": session_state,
             "revision": int(item.get("revision", 0)) + (1 if status == "awaiting_confirmation" else 0),
             "completed_at": time.time(),
-        })
+        }, expected_statuses=("running",))
+        if not saved or saved.get("status") != status:
+            return
+        context.db.add_collaboration_message(collaboration_id, "assistant", message)
         logger.info("collaboration completed", extra={"collaboration_id": collaboration_id, "stage": "collaboration", "duration_seconds": round(time.time() - started_at, 2)})
     except AgentCollaborationCancelled:
         take_session_state()
         current = context.db.collaboration(collaboration_id)
         if current and current.get("status") not in {"cancelled", "abandoned", "interrupted"}:
-            context.db.update_collaboration(collaboration_id, {"status": "cancelled", "completed_at": time.time()})
+            context.db.update_collaboration(collaboration_id, {"status": "cancelled", "completed_at": time.time()},
+                                            expected_statuses=("running",))
         logger.info("collaboration cancelled", extra={"collaboration_id": collaboration_id, "stage": "collaboration", "duration_seconds": round(time.time() - started_at, 2)})
     except Exception as exc:
         session_state = take_session_state()
@@ -110,7 +113,7 @@ async def process_agent_collaboration(collaboration_id: str) -> None:
             context.db.update_collaboration(collaboration_id, {
                 "status": "failed", "error": str(detail), "state": session_state,
                 "completed_at": time.time(),
-            })
+            }, expected_statuses=("running",))
         logger.exception("collaboration failed", extra={"collaboration_id": collaboration_id, "stage": "collaboration", "duration_seconds": round(time.time() - started_at, 2), "error_code": type(exc).__name__})
 
 
@@ -128,7 +131,7 @@ async def agent_worker() -> None:
             if item and item.get("status") not in {"cancelled", "abandoned"}:
                 context.db.update_collaboration(collaboration_id, {
                     "status": "failed", "error": str(exc), "completed_at": time.time(),
-                })
+                }, expected_statuses=("queued", "running"))
         finally:
             context.current_collaboration_id.reset(token)
             context.agent_queue.task_done()

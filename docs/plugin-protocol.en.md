@@ -245,6 +245,8 @@ Rerunning a resource action uses its original parent job. An action started from
 
 Every declared field must map back to an input accepted by `input_schema`; include plugin tests for UI defaults, legacy task restoration, dimension mapping, and reruns. JSON Schema `default` does not mutate submitted data. Declare `ui.fields[].default` when the editor and saved task snapshot need a deterministic default.
 
+The workbench and Infinite Canvas consume the same action UI declaration. For `dimensions`, the first `presets` item is the default for a new form or canvas node. At runtime, the canvas derives final `width` and `height` from the source task plus `edge`, `long_edge`, and `alignment`; once this control is declared, a host must not expose the underlying width and height as separate user inputs. Regular generation capabilities should declare `settings.ratio` and `settings.resolution` options instead of presenting workflow-node dimensions as ordinary parameters. Public schema properties not represented by `ui.fields` may be exposed by automation hosts as advanced inputs, so internal control values must not be placed in the public `input_schema`.
+
 The `voice` control lists presets registered by the current plugin. When voice selection is editable, use a stable voice key (for example `preset_id`) in both the action schema and form; never submit a localized display label. For actions requiring an uploaded audio sample, the plugin must explicitly define whether replacement is supported. Do not reuse ordinary generation media fields without an action media-replacement contract.
 
 ### Shared discovery and execution endpoints

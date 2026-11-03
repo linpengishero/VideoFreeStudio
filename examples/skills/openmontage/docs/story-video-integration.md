@@ -14,6 +14,9 @@ the independently installed story-video-skill, and are not upstream official rel
   Selected-media and final
   gates bind refinement parent
   receipts, film-studio composition evidence and reviewed downloaded output hashes.
+  Refinement QA is lightweight (audio kept, loudness parity, artifacts) over objective
+  tech_scan attachments; video QA densely covers each clip and the final gate binds
+  measured loudness of the delivered file.
   Scoped explicit user delegation is distinct from default manual H3 confirmation.
   Gateway ai-project-progress and project-archive give the user visible stage progress
   and manuscript archives; they are project management only and never replace

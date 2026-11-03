@@ -23,7 +23,7 @@ import {notify} from '../services/notifications';
 const props=defineProps({selected:Object,categories:Array,capabilities:Array,projectId:String,categoryId:String,voices:Array});
 const emit=defineEmits(['select-capability','submitted']);
 const values=ref({settings:{},parameters:{}}),inputs=ref([]),processing=ref('direct'),busy=ref(false),session=ref(null),answer=ref('');
-const activities=ref([]),activityId=ref('');
+const activities=ref([]),activityId=ref(''),activitiesOpen=ref(false),cancellationIds=ref(new Set());
 const referencesOpen=ref(false),preview=ref(null),collaborationOpen=ref(true);
 const collaborationEntries=import.meta.glob('../../../plugins/*/ui/*.vue');
 const collaborationRuntimeComponents=new Map();
@@ -47,34 +47,61 @@ const referenceMentions=computed(()=>buildMentions(inputs.value,mentionBindings)
 const firstInput=computed(()=>inputs.value[0] || null);
 const pending=computed(()=>['queued','running'].includes(session.value?.status));
 const activeSession=computed(()=>session.value && !['failed','cancelled','submitted','deleted'].includes(session.value.status));
+const activeActivities=computed(()=>activities.value.filter(item=>['queued','running','needs_input','awaiting_confirmation'].includes(item.status)));
 const canAnswer=computed(()=>!!session.value && ['needs_input','awaiting_confirmation','failed'].includes(session.value.status) && !busy.value);
 // Collaboration state belongs to the dock; only an in-flight request locks the composer.
 const locked=computed(()=>busy.value);
 const sessionKey=computed(()=>`videofree-form-session-${props.projectId}-${props.categoryId || 'all'}-${props.selected?.id}`);
-let timer,activityTimer,revision=0;
+let timer,activityTimer,revision=0,activitiesRequest=0;
 function reportError(error,title=t('操作失败')){
   notify(error?.message || error || t('操作失败'),{type:'error',title});
 }
 async function refreshActivities(){
   const projectId=props.projectId;
-  try{const result=await gateway.collaborations(projectId);if(projectId===props.projectId)activities.value=result.items || [];}catch{/* The current form remains usable during a temporary network failure. */}
+  const request=++activitiesRequest;
+  try{const result=await gateway.collaborations(projectId);if(request===activitiesRequest&&projectId===props.projectId)activities.value=result.items || [];}catch{/* The current form remains usable during a temporary network failure. */}
 }
-watch(()=>props.projectId,()=>{clearInterval(activityTimer);activities.value=[];void refreshActivities();activityTimer=setInterval(refreshActivities,5000);},{immediate:true});
+watch(()=>props.projectId,()=>{activitiesRequest++;clearInterval(activityTimer);activities.value=[];activitiesOpen.value=false;void refreshActivities();activityTimer=setInterval(refreshActivities,5000);},{immediate:true});
 async function openActivity(){
   const item=activities.value.find(item=>item.id===activityId.value);activityId.value='';
   if(!item)return;
   emit('select-capability',item.capability_id);await nextTick();
-  revision++;clearTimeout(timer);await resume(item,revision);
+  revision++;clearTimeout(timer);await resume(item,revision,sessionKey.value);
 }
-async function cancelActivity(id){
-  try{await gateway.cancelCollaboration(id);await refreshActivities();if(session.value?.id===id)await newTask();}
-  catch(e){if(session.value?.id===id)reportError(e,t('无法取消协作'));}
+function activityStatus(status){
+  const labels={queued:'协作排队中',running:'协作进行中',needs_input:'等待补充信息',awaiting_confirmation:'等待确认'};
+  return t(labels[status] || '协作状态未知');
 }
-async function cancelAllActivities(){
-  const active=activities.value.filter(item=>!['cancelled','deleted'].includes(item.status));
-  await Promise.all(active.map(item=>gateway.cancelCollaboration(item.id).catch(()=>null)));
+async function cancelActivities(ids){
+  const requested=[...new Set(ids)].filter(id=>id&&!cancellationIds.value.has(id));
+  if(!requested.length)return;
+  const currentId=session.value?.id;
+  const currentKey=sessionKey.value;
+  const cancelsCurrent=!!currentId&&requested.includes(currentId);
+  const token=cancelsCurrent?++revision:null;
+  if(cancelsCurrent)clearTimeout(timer);
+  activitiesRequest++;
+  cancellationIds.value=new Set([...cancellationIds.value,...requested]);
+  const results=await Promise.allSettled(requested.map(id=>gateway.cancelCollaboration(id)));
+  const cancelled=requested.filter((_,index)=>results[index].status==='fulfilled');
+  const failed=requested.filter((_,index)=>results[index].status==='rejected');
+  activities.value=activities.value.filter(item=>!cancelled.includes(item.id));
+  if(cancelsCurrent&&cancelled.includes(currentId)){
+    localStorage.removeItem(currentKey);
+    if(session.value?.id===currentId&&revision===token){session.value=null;answer.value='';delete values.value.parent_job_id;}
+  }else if(cancelsCurrent&&failed.includes(currentId)&&session.value?.id===currentId&&revision===token){
+    try{await resume(await gateway.collaboration(currentId),token,currentKey);}
+    catch(e){reportError(e,t('无法取消协作'));}
+  }
+  cancellationIds.value=new Set([...cancellationIds.value].filter(id=>!requested.includes(id)));
+  if(failed.length)reportError(t('有 {count} 个协作取消失败',undefined,{count:failed.length}),t('无法取消协作'));
   await refreshActivities();
-  if(session.value && active.some(item=>item.id===session.value.id))await newTask();
+}
+async function cancelActivity(id){await cancelActivities([id]);}
+async function cancelAllActivities(){await cancelActivities(activeActivities.value.map(item=>item.id));}
+function clearCurrentSession(id=session.value?.id,key=sessionKey.value){
+  revision++;clearTimeout(timer);localStorage.removeItem(key);
+  if(!id||session.value?.id===id){session.value=null;answer.value='';delete values.value.parent_job_id;}
 }
 function clearInputs(){for(const item of inputs.value)URL.revokeObjectURL(item.preview);mentionBindings.clear();inputs.value=[];}
 watch([()=>props.selected?.id,()=>props.projectId,()=>props.categoryId],()=>{
@@ -131,13 +158,16 @@ function remove(item){
 function serializedPrompt(){
   return promptSegments(values.value.prompt,referenceMentions.value).map(segment=>segment.mention?segment.reference.label:segment.text).join('');
 }
-async function resume(saved,token){session.value=saved;try{await accept(await gateway.collaboration(saved.id),token);}catch(e){if(token===revision){reportError(e,t('无法恢复智能协作'));session.value=null;localStorage.removeItem(sessionKey.value);}}}
-async function accept(result,token){
+async function resume(saved,token,key=sessionKey.value){try{await accept(await gateway.collaboration(saved.id),token,key);}catch(e){if(token===revision){reportError(e,t('无法恢复智能协作'));if(session.value?.id===saved.id)session.value=null;localStorage.removeItem(key);}}}
+async function accept(result,token,key=sessionKey.value){
   if(token!==revision)return;
-  if(result.job_id){localStorage.removeItem(sessionKey.value);session.value=null;delete values.value.parent_job_id;emit('submitted',result.job_id);return;}
+  if(result.job_id){localStorage.removeItem(key);session.value=null;delete values.value.parent_job_id;emit('submitted',result.job_id);return;}
   if(!result.id)throw Error(t('服务未返回任务或协作会话标识'));
-  session.value=result;collaborationOpen.value=true;localStorage.setItem(sessionKey.value,JSON.stringify(result));
-  if(['queued','running'].includes(result.status))timer=setTimeout(async()=>{try{await accept(await gateway.collaboration(result.id),token);}catch(e){if(token===revision)reportError(e,t('智能协作中断'));}},1200);
+  if(['cancelled','deleted','abandoned','interrupted','submitted'].includes(result.status)){
+    localStorage.removeItem(key);if(session.value?.id===result.id||!session.value)session.value=null;return;
+  }
+  session.value=result;collaborationOpen.value=true;localStorage.setItem(key,JSON.stringify(result));
+  if(['queued','running'].includes(result.status))timer=setTimeout(async()=>{try{await accept(await gateway.collaboration(result.id),token,key);}catch(e){if(token===revision)reportError(e,t('智能协作中断'));}},1200);
 }
 function onComposerKeydown(event){
   if(event.key!=='Enter' || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey ||
@@ -161,15 +191,12 @@ async function submit(action='create'){
   }catch(e){if(token===revision)reportError(e,action==='create'?t('无法提交任务'):t('智能协作操作失败'));}finally{if(token===revision)busy.value=false;}
 }
 async function newTask(){
-  if(session.value?.id && session.value.status !== 'cancelled'){
-    try{await gateway.cancelCollaboration(session.value.id);}catch(e){reportError(e,t('无法取消当前任务'));return;}
-  }
-  revision++;clearTimeout(timer);
-  localStorage.removeItem(sessionKey.value);session.value=null;
-  delete values.value.parent_job_id;
+  const current=session.value;
+  if(current&&['queued','running','needs_input','awaiting_confirmation'].includes(current.status))return cancelActivities([current.id]);
+  clearCurrentSession(current?.id,sessionKey.value);
   await refreshActivities();
 }
-onBeforeUnmount(()=>{revision++;clearTimeout(timer);clearInterval(activityTimer);clearInputs();});
+onBeforeUnmount(()=>{revision++;activitiesRequest++;clearTimeout(timer);clearInterval(activityTimer);clearInputs();});
 </script>
 <template>
   <section class="plugin-panel" :class="{'is-locked':locked}"><form @submit.prevent="submit()" @keydown="onComposerKeydown">
@@ -187,23 +214,24 @@ onBeforeUnmount(()=>{revision++;clearTimeout(timer);clearInterval(activityTimer)
     <p v-if="selected && !selected.ui" role="alert" class="plugin-error">{{ t('此插件尚未声明 UI 表单，请更新插件。') }}</p>
   </form></section>
   <Teleport to="body">
-    <button v-if="session && !collaborationOpen" class="plugin-collaboration-reopen" type="button" :aria-label="t(&quot;打开智能协作&quot;)" @click="collaborationOpen=true"><Icon icon="solar:stars-minimalistic-bold-duotone" width="19"/><span>{{ t('智能协作') }}</span></button>
-    <aside v-if="session && collaborationOpen" class="plugin-collaboration-dock" :aria-label="t(&quot;智能协作面板&quot;)">
+    <button v-if="(session||activeActivities.length)&&!collaborationOpen" class="plugin-collaboration-reopen" type="button" :aria-label="t(&quot;打开智能协作&quot;)" @click="collaborationOpen=true"><Icon icon="solar:stars-minimalistic-bold-duotone" width="19"/><span>{{ t('智能协作') }}</span></button>
+    <aside v-if="(session||activeActivities.length)&&collaborationOpen" class="plugin-collaboration-dock" :aria-label="t(&quot;智能协作面板&quot;)">
       <header class="plugin-collaboration-header">
         <span class="plugin-collaboration-mark"><Icon icon="solar:stars-minimalistic-bold-duotone" width="18"/></span>
         <strong>{{ t('智能协作') }}</strong>
-        <button v-if="activities.filter(item=>!['cancelled','deleted'].includes(item.status)).length>1" type="button" :aria-label="t(&quot;取消全部智能协作&quot;)" :title="t(&quot;取消全部智能协作&quot;)" @click="cancelAllActivities"><Icon icon="solar:forbidden-circle-linear" width="17"/></button>
-        <button v-if="session" type="button" :aria-label="t(&quot;取消当前任务&quot;)" :title="t(&quot;取消当前任务&quot;)" @click="newTask"><Icon icon="solar:stop-circle-linear" width="17"/></button>
+        <button v-if="activeActivities.length>1||!session" class="plugin-collaboration-sessions-toggle" type="button" :aria-label="t(&quot;切换协作会话 {count}&quot;,undefined,{count:activeActivities.length})" :title="t(&quot;切换协作会话 {count}&quot;,undefined,{count:activeActivities.length})" :aria-expanded="activitiesOpen" @click="activitiesOpen=!activitiesOpen"><Icon icon="solar:layers-minimalistic-linear" width="17"/><small>{{activeActivities.length}}</small></button>
+        <button v-if="activeActivities.length>1" type="button" :aria-label="t(&quot;取消全部智能协作&quot;)" :title="t(&quot;取消全部智能协作&quot;)" :disabled="cancellationIds.size>0" @click="cancelAllActivities"><Icon icon="solar:forbidden-circle-linear" width="17"/></button>
+        <button v-if="session" type="button" :aria-label="t(&quot;取消当前任务&quot;)" :title="t(&quot;取消当前任务&quot;)" :disabled="session.id&&cancellationIds.has(session.id)" @click="newTask"><Icon icon="solar:stop-circle-linear" width="17"/></button>
         <button type="button" :aria-label="t(&quot;收起智能协作&quot;)" :title="t(&quot;收起&quot;)" @click="collaborationOpen=false"><Icon icon="solar:minimize-square-3-linear" width="17"/></button>
       </header>
-      <section v-if="activities.length > 1" class="plugin-collaboration-activities" :aria-label="t(&quot;协作会话列表&quot;)">
-        <article v-for="item in activities" :key="item.id" :class="{current:item.id===session.id}">
-          <button type="button" @click="activityId=item.id;openActivity()"><b>{{capabilities.find(cap=>cap.id===item.capability_id)?.name || item.capability_id}}</b><span>{{item.mode_id || item.collaboration_mode}} · {{item.status}}</span></button>
-          <button v-if="!['cancelled','deleted'].includes(item.status)" type="button" :title="t(&quot;取消此协作&quot;)" :aria-label="t(&quot;取消此协作&quot;)" @click="cancelActivity(item.id)"><Icon icon="solar:stop-circle-linear" width="15"/></button>
+      <section v-if="activitiesOpen&&(activeActivities.length > 1||!session)" class="plugin-collaboration-activities" :aria-label="t(&quot;协作会话列表&quot;)">
+        <article v-for="item in activeActivities" :key="item.id" :class="{current:item.id===session?.id}">
+          <button type="button" @click="activityId=item.id;openActivity()"><b>{{capabilities.find(cap=>cap.id===item.capability_id)?.name || item.capability_id}}</b><span>{{activityStatus(item.status)}}</span></button>
+          <button type="button" :title="t(&quot;取消此协作&quot;)" :aria-label="t(&quot;取消此协作&quot;)" :disabled="cancellationIds.has(item.id)" @click="cancelActivity(item.id)"><Icon icon="solar:stop-circle-linear" width="15"/></button>
         </article>
       </section>
-      <PluginView v-if="collaborationRuntimeComponent || collaborationComponent" :loader="collaborationRuntimeComponent || collaborationComponent" :plugin-id="selected?.plugin_id" :session="session" :busy="busy" :pending="pending" :can-answer="canAnswer" :answer="answer" @update:answer="answer=$event" @confirm="submit('confirm')" @answer="submit('answer')" @new-task="newTask" />
-      <div v-else class="plugin-collaboration-fallback" role="status">{{session.error || session.message || session.status}}</div>
+      <PluginView v-if="session&&(collaborationRuntimeComponent || collaborationComponent)" :loader="collaborationRuntimeComponent || collaborationComponent" :plugin-id="selected?.plugin_id" :session="session" :busy="busy" :pending="pending" :can-answer="canAnswer" :answer="answer" @update:answer="answer=$event" @confirm="submit('confirm')" @answer="submit('answer')" @new-task="newTask" />
+      <div v-else-if="session" class="plugin-collaboration-fallback" role="status">{{session.error || session.message || session.status}}</div>
     </aside>
   </Teleport>
   <MediaDialog :open="referencesOpen" :busy="busy" @close="referencesOpen=false">
@@ -364,6 +392,8 @@ onBeforeUnmount(()=>{revision++;clearTimeout(timer);clearInterval(activityTimer)
 .plugin-collaboration-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; background: #2b3727; color: var(--lime); }
 .plugin-collaboration-header button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: #9ba39a; cursor: pointer; }
 .plugin-collaboration-header button:hover { background: #ffffff12; color: var(--text); }
+.plugin-collaboration-header .plugin-collaboration-sessions-toggle { display: flex; align-items: center; justify-content: center; gap: 2px; width: 38px; }
+.plugin-collaboration-sessions-toggle small { color: var(--lime); font-size: 10px; font-weight: 700; }
 .plugin-collaboration-fallback { padding: 18px; font-size: 13px; }
 .plugin-collaboration-reopen { position: fixed; right: 18px; bottom: 18px; z-index: 42; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 13px; border: 1px solid #ffffff24; border-radius: 11px; background: #1d201e; color: #dbe0d8; box-shadow: 0 12px 36px #000a; cursor: pointer; }
 .plugin-collaboration-reopen svg { color: var(--lime); }
@@ -402,7 +432,8 @@ onBeforeUnmount(()=>{revision++;clearTimeout(timer);clearInterval(activityTimer)
 .plugin-references-dialog footer { display: flex; justify-content: flex-end; padding: 12px 20px; border-top: 1px solid #ffffff12; }
 .plugin-references-dialog footer button { padding: 7px 20px; border: 1px solid #ffffff20; border-radius: 6px; background: #33383a; color: #e4e8e9; cursor: pointer; }
 .plugin-reference-status { margin: 0; padding: 0 20px 12px; font-size: 12px; color: #c5cdd3; }
-.plugin-collaboration-activities { display: grid; gap: 5px; padding: 8px; border-bottom: 1px solid var(--line); background: #151718; }
+.plugin-collaboration-activities { display: grid; gap: 5px; max-height: 180px; padding: 8px; overflow-y: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); background: #151718; }
+.plugin-collaboration-activities::-webkit-scrollbar { display: none; }
 .plugin-collaboration-activities article { display: grid; grid-template-columns: minmax(0,1fr) 28px; align-items: center; gap: 4px; min-height: 34px; border: 1px solid transparent; border-radius: 7px; }
 .plugin-collaboration-activities article.current { border-color: #b7f34a45; background: #b7f34a08; }
 .plugin-collaboration-activities button { min-width: 0; height: 30px; padding: 0 8px; border: 0; background: transparent; color: #a9aea7; text-align: left; cursor: pointer; }

@@ -117,6 +117,12 @@ The `voice` control lists presets registered by the same `plugin_id`; to let use
 
 Actions without editable values may use an empty field list and still rerun with the saved action inputs. JSON Schema `default` does not mutate submitted data; declare `ui.fields[].default` for values that must appear in the editor and persist in the task snapshot. Tests should cover UI defaults, legacy restoration, action-input snapshots, dimension mapping, and rerunning the same action. See the [action task editing protocol](../docs/plugin-protocol.en.md#editing-and-rerunning-generated-action-jobs) for the full contract.
 
+### Workbench and Infinite Canvas form compatibility
+
+Regular generation capabilities should expose declarative `settings.ratio` and `settings.resolution` selects with explicit options and defaults; do not expose workflow-node `width` and `height` directly to users. When a resource action selects a target quality while preserving the source aspect ratio, its execution schema still declares integer `width` and `height`, but its UI must expose only one `{"bind":"target_size","component":"dimensions"}` field. The first `presets` item is the default for a new task and an Infinite Canvas node, so place 720P first when that is the intended default. The host derives final dimensions from the source task, `edge`, `long_edge`, and `alignment` before executing the action.
+
+Infinite Canvas consumes the same `actions[].ui.fields` as the workbench and does not maintain model-specific forms. A declared `dimensions` field becomes one resolution selector and suppresses the underlying width and height inputs. Schema properties not represented by UI fields may appear as advanced input ports, so internal controls must not leak into the public `input_schema`, and a plugin must not expose both a resolution field and separate width/height controls for the same setting. Plugin tests should verify the default preset, aspect-ratio preservation, alignment, and equivalent action inputs from the workbench and Infinite Canvas.
+
 Collaboration results with `ready` must contain complete `optimized_prompt` and `optimized_prompt_zh`. `needs_input` must contain `session_id` and non-empty `questions` (each question has `text` and optional `options`). `runtime.single(request)` creates a session and repairs one structured-format error; custom handlers should use `runtime.repair_result(...)`. `start_progress` takes stage objects, for example `[ {"id": "optimize", "label": "Optimize prompt"} ]`, not a mode-name string.
 
 ## PluginRuntime

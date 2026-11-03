@@ -29,7 +29,7 @@ python <bridge> --openmontage-root <root> --projects-root <projects> --project-i
 
 开场记录自动制作授权后，授权范围内使用自动阶段推进并连续执行，不在普通检查点逐阶段询问；未授权的项目才用`--require-approval`并停在`awaiting_human`。H3逐稿确认包含在本项目开场明确授权中，必须先审核实际转换稿并记录证据；无该授权才等待逐稿批准。授权按定稿revision限定，超预算、外部发布、实质歧义或无法恢复的故障不包含在内。
 
-assets内部按Qwen草稿、定版图、四宫格、切割、H3 compile、视频QA执行。二采复审并选中后运行selected。完成assets/edit检查点自动检查selected，compose/publish检查final，均追加--production。修改上游只重做受影响内容；未变化资产可通过spec哈希复用，不修改旧QA版本假称复审。
+assets内部按Qwen草稿、定版图、四宫格、切割、H3 compile、视频QA执行。二采通过refine轻量QA并选中后运行selected。完成assets/edit检查点自动检查selected，compose/publish检查final，均追加--production。修改上游只重做受影响内容；未变化资产可通过spec哈希复用，不修改旧QA版本假称复审。
 
 修改上游阶段前，按管线顺序把该阶段及所有已有下游检查点通过原生API写回 `in_progress`（使用各自当前产物集合），随后重做和复审。原生历史归档保留旧记录；完成前读取 next，禁止跳过未完成前置阶段。jobs.jsonl保存网关任务ID用于恢复，不重复提交。
 

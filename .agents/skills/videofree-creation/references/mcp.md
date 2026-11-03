@@ -86,12 +86,13 @@ AI 可通过 `create_project_category` 和 `update_project_category` 创建、�
 已经得到用户明确确认后，可以继续使用：
 
 7. `confirm_collaboration`：按协作版本确认并提交实际生成任务。
-8. `upload_reference`：上传 Base64 图片、视频或音频并取得 `upload_id`。
+8. `upload_reference`：上传图片、视频或音频并取得 `upload_id`；连接本机 `127.0.0.1`/`::1` 时可传 `file_path`，远程连接使用 Base64 或 REST 上传。
 9. `submit_generation`：直接提交已经准备好的生成请求。
 10. `get_job`：查询任务状态。
 11. `wait_job`：等待任务更新；超时不会取消任务。
 12. `get_job_artifacts`：获取最终媒体产物的网关下载 URL。
-13. `cancel_job`：取消仍在排队或运行中的任务。
+13. `read_job_artifact`：通过 MCP 分块读取指定产物；远程客户端按 `next_offset` 继续读取，直到 `eof=true`。
+14. `cancel_job`：取消仍在排队或运行中的任务。
 
 当前项目由整个网关实例共享；导演协作、直接生成和确认生成应显式传入项目 ID，
 避免依赖可被其他调用切换的当前项目。任务提交后会固定项目归属，二采、
@@ -114,13 +115,15 @@ list_capabilities
 
 `awaiting_confirmation` 表示提示词已经完成但等待用户审核，不代表生成失败。
 `confirm_collaboration` 和 `submit_generation` 会产生实际生成任务，只能在用户
-明确确认后调用。生成完成后，`get_job_artifacts` 返回的 `url` 可以由其它 AI
-下载或交给用户；任务长时间运行时重复调用 `wait_job` 即可。
+明确确认后调用。生成完成后，有 HTTP 下载能力的客户端使用 `get_job_artifacts`
+返回的 `url`；仅通过 MCP 连接的局域网或远程客户端使用 `read_job_artifact`，按产物序号和
+`next_offset` 分块读取并 Base64 解码拼接。任务长时间运行时重复调用 `wait_job` 即可。
 
 ## 参考素材
 
-可用 `upload_reference` 上传 Base64 素材；大文件也可通过 REST 上传。
-外部 AI 不能传入网关本机任意路径。使用 REST 技能客户端上传时：
+可用 `upload_reference` 上传素材。与网关运行在同一台电脑且 MCP 地址为
+`127.0.0.1` 或 `::1` 时，优先传 `file_path`，避免把大文件展开为 Base64；该参数读取的是
+网关电脑路径。局域网或其他远程客户端不能使用 `file_path`，应传非空 Base64，或通过 REST 上传：
 
 ```powershell
 python scripts/videofree_api.py upload C:\media\reference.png

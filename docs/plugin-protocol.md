@@ -339,6 +339,8 @@ resolution、duration、variant、voice_id、voice_speed、instruction、native_
 
 确保每个声明字段都能映射回 `input_schema` 接受的动作输入，并为 UI 默认值、旧任务回填、尺寸转换和重执行提供插件测试。JSON Schema 的 `default` 不会自动修改传入数据；要让 UI 回填和任务快照有确定默认值，应在对应 `ui.fields[].default` 中声明。
 
+工作台和无限画布共用这份动作 UI 声明。对于 `dimensions`，`presets` 第一项是新建表单和画布节点的默认档位；画布按运行时来源任务的宽高、`edge`、`long_edge` 与 `alignment` 计算最终 `width`、`height`。声明该控件后，宿主不得再向用户展示底层宽高输入。普通生成能力应使用 `settings.ratio` 与 `settings.resolution` 的选项声明，不应把工作流节点宽高伪装成普通参数。未被 `ui.fields` 表达的公共 Schema 属性可能被自动化宿主显示为高级输入，因此插件不得把内部控制字段放入公共 `input_schema`。
+
 `voice` 控件只展示当前插件注册的音色；允许更改音色时，动作 schema 与表单都应使用稳定音色 key（如 `preset_id`），不提交本地化名称。依赖上传音频样本的动作需由插件明示是否支持重传；未定义动作媒体替换契约时，不要复用普通生成任务的素材字段。
 
 ### 唯一发现和执行入口

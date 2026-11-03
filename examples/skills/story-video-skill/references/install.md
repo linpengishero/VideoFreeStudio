@@ -4,7 +4,7 @@
 
 把整个 `story-video-skill` 目录安装到目标智能体支持的技能目录，入口为 `SKILL.md`。必须一起携带 `references/`、`scripts/`，不是只粘贴入口文本。技能不随包任何角色资产；角色、阵营、动作、场景和声音都按故事规划。不同平台的技能目录和子智能体接口以该平台说明为准。
 
-本包不依赖旧 `dialogue-man`、Hermes、看板服务或 `/shared` 挂载。必须同时独立安装完整 `openmontage` 包，保留其 AGPL-3.0 许可证、版权和来源声明；不是只复制 SKILL.md。安装本技能提供的 `story-video` 管线集成，用于阶段状态、检查点与规范产物承载；内容结构与表达形式由故事决定。剪辑、混音、渲染由网关 film-studio 插件完成，不另写合成器，也不使用 OpenMontage 的 video_compose/audio_mixer。Python依赖按 OpenMontage requirements 安装，ffprobe需在PATH用于下载校验；Remotion/HyperFrames不再用于本技能合成。旧包保留供原环境使用。本包不安装模型，不另启媒体服务。具体命令见 [OpenMontage接入](openmontage.md)。
+本包不依赖旧 `dialogue-man`、Hermes、看板服务或 `/shared` 挂载。必须同时独立安装完整 `openmontage` 包，保留其 AGPL-3.0 许可证、版权和来源声明；不是只复制 SKILL.md。安装本技能提供的 `story-video` 管线集成，用于阶段状态、检查点与规范产物承载；内容结构与表达形式由故事决定。剪辑、混音、渲染由网关 film-studio 插件完成，不另写合成器，也不使用 OpenMontage 的 video_compose/audio_mixer。Python依赖按 OpenMontage requirements 安装，ffprobe与ffmpeg需在PATH（下载校验及tech_scan.py客观扫描）；Remotion/HyperFrames不再用于本技能合成。旧包保留供原环境使用。本包不安装模型，不另启媒体服务。具体命令见 [OpenMontage接入](openmontage.md)。
 
 主制片连接现有videofree MCP：`http://192.168.50.8:8765/mcp`。当前不用token。支持远程HTTP MCP的客户端填写服务名 `videofree` 与URL；部分客户端支持：
 

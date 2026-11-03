@@ -1,4 +1,6 @@
+import asyncio
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -28,10 +30,44 @@ def load_plugin_module(name, path):
 load_plugin_module(f"{PACKAGE}.prompts", COLLABORATION_DIR / "prompts.py")
 analysis = load_plugin_module(f"{PACKAGE}.analysis", COLLABORATION_DIR / "analysis.py")
 confirmation = load_plugin_module(f"{PACKAGE}.confirmation", COLLABORATION_DIR / "confirmation.py")
+load_plugin_module(f"{PACKAGE}.pipeline", COLLABORATION_DIR / "pipeline.py")
+handler = load_plugin_module(f"{PACKAGE}.handler", COLLABORATION_DIR / "handler.py")
+from backend.core.schemas import AgentChatRequest
 from backend.modules.collaboration import modes as collaboration_modes
 
 
 class MiniMaxCollaborationFallbackTests(unittest.TestCase):
+    def test_quick_repair_receives_original_model_output(self):
+        raw_output = json.dumps({"status": "ready", "optimized_prompt": "incomplete"})
+        repaired = {
+            "status": "ready", "questions": [], "reference_map": [], "decisions": [],
+            "optimized_prompt_zh": "完整中文稿", "optimized_prompt": "complete prompt",
+        }
+
+        class Runtime:
+            def __init__(self):
+                self.repair_messages = None
+
+            def session(self, _session_id): return None
+            def staged_context(self, _request): return {}
+            def initial_message(self, _request): return "request"
+            def save_session(self, _session): pass
+            def start_progress(self, *_args): pass
+            def update_progress(self, *_args): pass
+            def finish_progress(self, *_args): pass
+            def fail_progress(self, *_args): pass
+            def call_model(self, _messages, _max_tokens): return raw_output
+            def repair_result(self, messages, *_args):
+                self.repair_messages = messages
+                return repaired
+
+        runtime = Runtime()
+        request = AgentChatRequest(message="角色抬头", model="minimax-h3", mode="reference")
+        result = asyncio.run(handler.compile(request, runtime))
+
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(runtime.repair_messages[-1], {"role": "assistant", "content": raw_output})
+
     def test_missing_reference_offers_one_t2va_choice(self):
         result = {"status": "ready", "questions": []}
         normalized = analysis.normalize_reference_mode_questions(result, "reference", {"ordered_references": []})

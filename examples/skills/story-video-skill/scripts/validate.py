@@ -14,8 +14,42 @@ CHECKS = {
     "image": {"identity", "composition", "continuity"},
     "voice": {"intelligibility", "identity", "quality"},
     "media": {"identity", "speaker", "dialogue", "voice", "action", "continuity"},
+    "refine": {"audio_track", "loudness", "artifacts"},
     "final": {"narrative", "audio_mix", "continuity", "technical"},
 }
+
+# Video QA must densely cover the whole clip, not sample points; outliers then need per-item review.
+MIN_SAMPLING_FPS = {"media": 2.0, "refine": 1.0}
+MIN_BGM_RELATIVE_DB = -15.0
+MAX_REFINE_LOUDNESS_SHIFT_DB = 3.0
+
+
+def validate_sampling(report, stage):
+    errors = []
+    sampling = report.get("frame_sampling")
+    if not isinstance(sampling, dict):
+        return [f"{stage} QA requires a frame_sampling object"]
+    if sampling.get("mode") != "dense_full":
+        errors.append("frame_sampling mode must be dense_full (whole-clip scan, not point samples)")
+    duration = sampling.get("duration_sec")
+    frames = sampling.get("sampled_frames")
+    fps = sampling.get("sampling_fps")
+    minimum = MIN_SAMPLING_FPS[stage]
+    if not positive(duration):
+        errors.append("frame_sampling duration_sec must be the measured clip length")
+    if type(frames) is not int or frames < 1:
+        errors.append("frame_sampling sampled_frames must be a positive count")
+    if not isinstance(fps, (int, float)) or not math.isfinite(fps) or fps < minimum:
+        errors.append(f"frame_sampling sampling_fps must be >= {minimum} for {stage} QA")
+    elif positive(duration) and frames < math.ceil(duration * minimum):
+        errors.append(f"frame_sampling covers fewer frames than dense {minimum} fps over the clip")
+    anomalies = report.get("anomalies_reviewed")
+    if not isinstance(anomalies, list) or any(
+            not isinstance(item, dict) or not isinstance(item.get("t"), (int, float))
+            or not math.isfinite(item["t"]) or not nonempty(item.get("conclusion"))
+            or not nonempty(item.get("source")) for item in anomalies):
+        errors.append("anomalies_reviewed must list every flagged moment with source and conclusion (empty if none)")
+    return errors
 
 
 def nonempty(value):
@@ -197,6 +231,81 @@ def validate_reviewed_file(value, root, stage, revision, shots, allow_self=False
     return errors
 
 
+def load_tech_scan(value, root, label):
+    """Load the objective scan attachment bound to this exact artifact."""
+    scan = value.get("tech_scan") if isinstance(value, dict) else None
+    if not isinstance(scan, dict):
+        return [f"{label}: tech_scan attachment required"], None
+    try:
+        path = (Path(root) / scan["path"]).resolve()
+        if not path.is_relative_to(Path(root).resolve()) or not path.is_file() or not path.stat().st_size:
+            raise ValueError("missing, empty or outside run_root")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != scan.get("sha256"):
+            raise ValueError("SHA256 mismatch")
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        return [f"{label}: invalid tech_scan attachment: {exc}"], None
+    errors = []
+    if data.get("media_sha256") != value.get("sha256"):
+        errors.append(f"{label}: tech_scan measured a different artifact")
+    scans = data.get("scans") if isinstance(data.get("scans"), dict) else {}
+    if not {"scene", "framediff", "silence", "loudness", "balance"} <= set(scans):
+        errors.append(f"{label}: tech_scan must include scene, framediff, silence, loudness and balance detectors")
+    outliers = scans.get("framediff", {}).get("outliers") or []
+    flagged = {round(float(o["t"]), 2) for o in outliers if isinstance(o, dict) and isinstance(o.get("t"), (int, float))}
+    report = value.get("qa")
+    if flagged and isinstance(report, dict) and isinstance(report.get("anomalies_reviewed"), list):
+        covered = {round(float(i["t"]), 2) for i in report["anomalies_reviewed"]
+                   if isinstance(i, dict) and isinstance(i.get("t"), (int, float))}
+        missing = sorted(flagged - covered)
+        if missing:
+            errors.append(f"{label}: tech_scan outliers lack a reviewed conclusion: {missing}")
+    return errors, data
+
+
+def validate_final_audio(final, report, root):
+    """Final QA must carry measured loudness, not just a listening impression."""
+    if not isinstance(report, dict):
+        return []
+    audio = report.get("audio_loudness")
+    if not isinstance(audio, dict):
+        return ["Final QA requires audio_loudness measured from the delivered film"]
+    errors = []
+    measurement = audio.get("measurement")
+    data = None
+    if not isinstance(measurement, dict):
+        errors.append("audio_loudness.measurement must bind the audio scan file")
+    else:
+        try:
+            path = (Path(root) / measurement["path"]).resolve()
+            if not path.is_relative_to(Path(root).resolve()) or not path.is_file() or not path.stat().st_size:
+                raise ValueError("missing, empty or outside run_root")
+            if hashlib.sha256(path.read_bytes()).hexdigest() != measurement.get("sha256"):
+                raise ValueError("SHA256 mismatch")
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            errors.append(f"audio_loudness measurement invalid: {exc}")
+    if isinstance(data, dict):
+        if data.get("media_sha256") != final.get("sha256"):
+            errors.append("audio_loudness measurement scanned a different file than the delivered film")
+        for field, key in (("film_mean_db", "mean_db"), ("film_max_db", "max_db")):
+            if not isinstance(audio.get(field), (int, float)) or audio.get(field) != data.get(key):
+                errors.append(f"audio_loudness.{field} must equal the measured {key}")
+    max_db = audio.get("film_max_db")
+    if isinstance(max_db, (int, float)) and math.isfinite(max_db) and max_db > -0.5:
+        errors.append("Final film measured peak must not exceed -0.5 dBFS (clipping)")
+    if audio.get("has_bgm") is True:
+        rel = audio.get("bgm_relative_db")
+        if not isinstance(rel, (int, float)) or not math.isfinite(rel) or rel < MIN_BGM_RELATIVE_DB:
+            errors.append(f"bgm_relative_db must be measured and not below {MIN_BGM_RELATIVE_DB} dB versus dialogue")
+    elif audio.get("has_bgm") is False:
+        if audio.get("bgm_relative_db") is not None:
+            errors.append("bgm_relative_db must be null when the film has no BGM")
+    else:
+        errors.append("Final QA must state has_bgm explicitly")
+    return errors
+
+
 def selected_videos(plan):
     progress = plan.get("media_progress", {})
     result = {}
@@ -334,7 +443,9 @@ def validate_qa(report, stage, revision, shots, allow_self_review=False, shot_au
             audio_modes = [modes.get(shot_id) for shot_id in actual] if isinstance(actual, list) else []
             silent_na = (stage == "media" and bool(audio_modes) and None not in audio_modes
                          and ((name in {"speaker", "dialogue"} and all(mode in {"silent", "narration", "h3_scene_audio"} for mode in audio_modes))
-                              or (name == "voice" and all(mode in {"silent", "h3_scene_audio"} for mode in audio_modes))))
+                              or (name == "voice" and all(mode in {"silent", "h3_scene_audio"} for mode in audio_modes)))
+                         or (stage == "refine" and bool(audio_modes) and None not in audio_modes
+                             and name in {"audio_track", "loudness"} and all(mode == "silent" for mode in audio_modes)))
             if (value != "PASS" and not (value == "N/A" and silent_na)
                     and not (allow_nonpass and status != "PASS" and value in ("FAIL", "BLOCKED"))):
                 errors.append(f"QA required check {name} must PASS" + (" or valid N/A" if silent_na else ""))
@@ -346,6 +457,8 @@ def validate_qa(report, stage, revision, shots, allow_self_review=False, shot_au
                          for issue in (issues or []))
             if not linked:
                 errors.append(f"Additional QA check {name} needs a non-blocking issue record")
+    if stage in MIN_SAMPLING_FPS:
+        errors.extend(validate_sampling(report, stage))
     if (isinstance(issues, list) and any(isinstance(i, dict) and i.get("severity") == "blocking" for i in issues)
             and not (allow_nonpass and status != "PASS")):
         errors.append("QA contains blocking issues")
@@ -753,6 +866,8 @@ def validate_gate(plan, root, stage, shot_id=None):
                     if (submission.get("collaboration_id") != response.get("id")
                             or submission.get("job_id") != video.get("job_id")):
                         errors.append(f"{key}: video must come from recorded H3 session confirmation")
+                    scan_errors, _ = load_tech_scan(video, root, key)
+                    errors.extend(scan_errors)
         if rank >= 6:
             selected = progress.get("selected", {})
             if set(selected) != {s["id"] for s in plan["shots"]}:
@@ -766,11 +881,24 @@ def validate_gate(plan, root, stage, shot_id=None):
                     if entry.get("job_id") in seen or not parent or entry.get("parent_sha256") != parent.get("sha256"):
                         errors.append(f"{key}: invalid refinement parent chain")
                     seen[entry.get("job_id")] = entry
-                    # Same artifact/QA checks, without mutating the initial video ledger.
+                    # Refinement re-runs lightweight QA (audio kept, loudness parity, new artifacts);
+                    # the parent chain and hashes are proven deterministically here, no full media re-review.
                     wrapped = {**plan, "media_progress": {**progress, "videos": {**progress["videos"], key: entry}}}
                     audio_modes = {key: next(s["audio_mode"] for s in plan["shots"] if s["id"] == key)}
-                    errors.extend(validate_reviewed_file(entry, root, "media", entry.get("revision"), [key], allow_self,
+                    errors.extend(validate_reviewed_file(entry, root, "refine", entry.get("revision"), [key], allow_self,
                                                         shot_audio_modes=audio_modes))
+                    scan_errors, child_scan = load_tech_scan(entry, root, f"{key} refinement")
+                    errors.extend(scan_errors)
+                    if child_scan and isinstance(parent, dict):
+                        try:
+                            parent_scan_data = json.loads((root / parent["tech_scan"]["path"]).read_text(encoding="utf-8"))
+                            shift = abs(float(child_scan["scans"]["loudness"]["mean_db"])
+                                        - float(parent_scan_data["scans"]["loudness"]["mean_db"]))
+                        except (KeyError, OSError, TypeError, ValueError):
+                            shift = None
+                            errors.append(f"{key}: refinement needs readable tech_scan with loudness mean_db in chain")
+                        if shift is not None and shift > MAX_REFINE_LOUDNESS_SHIFT_DB:
+                            errors.append(f"{key}: refinement loudness deviates {shift:.1f} dB from parent (max {MAX_REFINE_LOUDNESS_SHIFT_DB})")
                     if entry.get("spec_sha256") != specification(wrapped, "videos", key):
                         errors.append(f"{key}: stale refinement specification")
                     if not nonempty(entry.get("action_id")):
@@ -790,6 +918,7 @@ def validate_gate(plan, root, stage, shot_id=None):
             errors.extend(validate_composition(plan, root, composition))
             final = progress.get("final", {})
             errors.extend(validate_reviewed_file(final, root, "final", revision, [s["id"] for s in plan["shots"]], allow_self))
+            errors.extend(validate_final_audio(final, final.get("qa"), root))
             if final.get("selection_sha256") != selection_hash(plan):
                 errors.append("Final output uses stale selected media")
             if final.get("compose_sha256") != fingerprint(composition):
