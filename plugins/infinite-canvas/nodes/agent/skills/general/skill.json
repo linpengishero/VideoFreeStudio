@@ -1,0 +1,7 @@
+{
+  "id": "general",
+  "name": "通用任务",
+  "name_en": "General task",
+  "description": "按系统角色和任务要求处理文本、数据与媒体上下文。",
+  "description_en": "Process text, data, and media context using the configured role and task."
+}

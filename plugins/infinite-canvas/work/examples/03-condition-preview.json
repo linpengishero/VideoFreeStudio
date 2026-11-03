@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "kind": "videofree.infinite-canvas",
+  "id": "workflow-condition-preview",
+  "name": "LLM 条件判断预览",
+  "nodes": [
+    {
+      "id": "node-payload-input",
+      "type": "videofree.input.text",
+      "position": {"x": 40, "y": 100},
+      "config": {"value": "审核对象：画面清晰、主体完整、无明显伪影。"},
+      "values": {}
+    },
+    {
+      "id": "node-judgement-input",
+      "type": "videofree.input.text",
+      "position": {"x": 40, "y": 360},
+      "config": {"value": "仅当审核对象同时满足画面清晰、主体完整且无明显伪影时返回成功。"},
+      "values": {}
+    },
+    {
+      "id": "node-condition",
+      "type": "videofree.control.llm-condition",
+      "position": {"x": 480, "y": 180},
+      "config": {"rule": "依据判断文本，严格判断上游产物是否通过质量检查。"},
+      "values": {}
+    },
+    {
+      "id": "node-data-preview",
+      "type": "videofree.preview.data",
+      "position": {"x": 900, "y": 180},
+      "config": {},
+      "values": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-payload-to-condition",
+      "kind": "data",
+      "from": {"node": "node-payload-input", "port": "value"},
+      "to": {"node": "node-condition", "port": "payload"}
+    },
+    {
+      "id": "edge-judgement-to-condition",
+      "kind": "data",
+      "from": {"node": "node-judgement-input", "port": "value"},
+      "to": {"node": "node-condition", "port": "text"}
+    },
+    {
+      "id": "edge-success-to-preview",
+      "kind": "data",
+      "from": {"node": "node-condition", "port": "success"},
+      "to": {"node": "node-data-preview", "port": "data"}
+    }
+  ],
+  "viewport": {"x": 0, "y": 0, "zoom": 1}
+}

@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "id": "infinite-canvas",
+  "version": "1.5.0",
+  "requires": {
+    "platform_min": "2.0.1",
+    "platform_max_exclusive": "3.0.0"
+  },
+  "name": "无限画布",
+  "name_key": "plugin.name",
+  "description": "将现有生成插件、自动化动作与画布专属节点编排为可分享工作流。",
+  "description_key": "plugin.description",
+  "assets": [
+    "assets/icon.svg",
+    "assets/icon.png"
+  ],
+  "categories": [],
+  "capabilities": {},
+  "application": {
+    "name": "无限画布",
+    "name_key": "plugin.name",
+    "scope": "project",
+    "order": 40,
+    "icon": "assets/icon.png",
+    "ui": {
+      "entry": "ui/dist/index.js"
+    }
+  },
+  "actions": [
+    {
+      "id": "infinite-canvas.list",
+      "name": "列出画布工作流",
+      "name_key": "action.list",
+      "description": "列出当前项目保存的无限画布工作流。",
+      "description_key": "action.list.description",
+      "scope": "workspace",
+      "automation": true,
+      "handler": "actions.py:execute",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "infinite-canvas.get",
+      "name": "读取画布工作流",
+      "name_key": "action.get",
+      "description": "读取当前项目中的一个完整工作流 JSON。",
+      "description_key": "action.get.description",
+      "scope": "workspace",
+      "automation": true,
+      "handler": "actions.py:execute",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "workflow_id": {
+            "type": "string",
+            "pattern": "^workflow-[A-Za-z0-9_-]{6,80}$"
+          }
+        },
+        "required": ["workflow_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "infinite-canvas.save",
+      "name": "保存画布工作流",
+      "name_key": "action.save",
+      "description": "新建或按修订号更新当前项目的完整工作流。",
+      "description_key": "action.save.description",
+      "scope": "workspace",
+      "automation": true,
+      "handler": "actions.py:execute",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "workflow": {"type": "object"},
+          "expected_revision": {"type": "integer", "minimum": 0}
+        },
+        "required": ["workflow", "expected_revision"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "infinite-canvas.delete",
+      "name": "删除画布工作流",
+      "name_key": "action.delete",
+      "description": "删除当前项目中的一个画布工作流。",
+      "description_key": "action.delete.description",
+      "scope": "workspace",
+      "automation": false,
+      "handler": "actions.py:execute",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "workflow_id": {
+            "type": "string",
+            "pattern": "^workflow-[A-Za-z0-9_-]{6,80}$"
+          },
+          "expected_revision": {"type": "integer", "minimum": 1}
+        },
+        "required": ["workflow_id", "expected_revision"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "infinite-canvas.import-asset",
+      "name": "导入画布素材",
+      "name_key": "action.import_asset",
+      "description": "把拖入画布的本地媒体持久化到当前项目资源库。",
+      "description_key": "action.import_asset.description",
+      "scope": "workspace",
+      "automation": false,
+      "handler": "actions.py:execute",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "upload_id": {"type": "string", "pattern": "^[a-fA-F0-9]{32}$"},
+          "name": {"type": "string", "maxLength": 255},
+          "kind": {"type": "string", "enum": ["image", "video", "audio", "music"]}
+        },
+        "required": ["upload_id", "name", "kind"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "infinite-canvas.agent-skills",
+      "name": "列出画布智能体技能",
+      "name_key": "action.agent_skills",
+      "description": "列出无限画布智能体节点可选择的插件内技能。",
+      "description_key": "action.agent_skills.description",
+      "scope": "workspace",
+      "automation": false,
+      "handler": "actions.py:execute",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "infinite-canvas.agent-run",
+      "name": "运行画布智能体",
+      "name_key": "action.agent_run",
+      "description": "使用系统 LLM 或自定义 OpenAI 兼容接口执行画布智能体任务。",
+      "description_key": "action.agent_run.description",
+      "scope": "workspace",
+      "automation": false,
+      "handler": "actions.py:execute",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "media": {},
+          "skill_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$"},
+          "task_prompt": {"type": "string", "maxLength": 24000},
+          "llm_source": {"type": "string", "enum": ["system", "custom"]},
+          "api_url": {"type": "string", "maxLength": 2048},
+          "api_key": {"type": "string", "maxLength": 4096},
+          "model": {"type": "string", "maxLength": 200}
+        },
+        "required": ["skill_id", "task_prompt", "llm_source"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "infinite-canvas.condition-run",
+      "name": "运行 LLM 条件判断",
+      "name_key": "action.condition_run",
+      "description": "依据判断文本输出成功或失败；成功时原样传递上游产物。",
+      "description_key": "action.condition_run.description",
+      "scope": "workspace",
+      "automation": false,
+      "handler": "actions.py:execute",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "text": {"type": "string", "minLength": 1},
+          "rule": {"type": "string", "minLength": 1, "maxLength": 12000}
+        },
+        "required": ["text", "rule"],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "localization": {
+    "default_locale": "zh-CN",
+    "messages": {
+      "zh-CN": "locales/zh-CN.json",
+      "en-US": "locales/en-US.json"
+    }
+  }
+}

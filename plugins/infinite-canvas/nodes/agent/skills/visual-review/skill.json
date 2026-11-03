@@ -1,0 +1,7 @@
+{
+  "id": "visual-review",
+  "name": "画面质检",
+  "name_en": "Visual review",
+  "description": "检查画面是否符合任务要求，并给出通过或重试决定。",
+  "description_en": "Review visual output against the task and decide whether to pass or retry."
+}

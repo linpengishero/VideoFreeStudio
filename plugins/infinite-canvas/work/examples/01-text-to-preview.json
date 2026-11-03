@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "kind": "videofree.infinite-canvas",
+  "id": "workflow-text-preview",
+  "name": "文本到数据预览",
+  "nodes": [
+    {
+      "id": "node-text-input",
+      "type": "videofree.input.text",
+      "position": {"x": 80, "y": 140},
+      "config": {"value": "这是一个可分享的无限画布工作流。"},
+      "values": {}
+    },
+    {
+      "id": "node-data-preview",
+      "type": "videofree.preview.data",
+      "position": {"x": 500, "y": 140},
+      "config": {},
+      "values": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-text-to-preview",
+      "kind": "data",
+      "from": {"node": "node-text-input", "port": "value"},
+      "to": {"node": "node-data-preview", "port": "data"}
+    }
+  ],
+  "viewport": {"x": 0, "y": 0, "zoom": 1}
+}

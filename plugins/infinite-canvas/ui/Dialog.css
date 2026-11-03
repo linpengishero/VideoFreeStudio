@@ -1,0 +1,7 @@
+.ic-dialog{width:min(420px,calc(100vw - 28px));padding:0;border:1px solid #ffffff20;border-radius:9px;background:#1a1e21;color:#e7ece9;box-shadow:0 24px 80px #000b}
+.ic-dialog::backdrop{background:#07090ac7;backdrop-filter:blur(3px)}
+.ic-dialog-panel{display:grid;gap:12px;padding:18px}
+.ic-dialog h3{margin:0;font-size:15px}
+.ic-dialog p{margin:0;color:#9ca59f;line-height:1.6}
+.ic-dialog-input{width:100%;height:36px;padding:0 10px;border:1px solid #ffffff20;border-radius:7px;outline:0;background:#0d1215;color:#eef5f1;font:12px inherit}.ic-dialog-input:focus{border-color:#79e6bb88;box-shadow:0 0 0 3px #79e6bb12}.ic-dialog-input.is-error{border-color:#e47770}
+.ic-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:5px}

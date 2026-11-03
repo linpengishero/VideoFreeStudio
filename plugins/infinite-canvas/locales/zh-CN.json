@@ -1,0 +1,20 @@
+{
+  "plugin.name": "无限画布",
+  "plugin.description": "将现有生成插件、自动化动作与画布专属节点编排为可分享工作流。",
+  "action.list": "列出画布工作流",
+  "action.list.description": "列出当前项目保存的无限画布工作流。",
+  "action.get": "读取画布工作流",
+  "action.get.description": "读取当前项目中的一个完整工作流 JSON。",
+  "action.save": "保存画布工作流",
+  "action.save.description": "新建或按修订号更新当前项目的完整工作流。",
+  "action.delete": "删除画布工作流",
+  "action.delete.description": "删除当前项目中的一个画布工作流。",
+  "action.import_asset": "导入画布素材",
+  "action.import_asset.description": "把拖入画布的本地媒体持久化到当前项目资源库。",
+  "action.agent_skills": "列出画布智能体技能",
+  "action.agent_skills.description": "列出无限画布智能体节点可选择的插件内技能。",
+  "action.agent_run": "运行画布智能体",
+  "action.agent_run.description": "使用系统 LLM 或自定义 OpenAI 兼容接口执行画布智能体任务。",
+  "action.condition_run": "运行 LLM 条件判断",
+  "action.condition_run.description": "依据判断文本输出成功或失败；成功时原样传递上游产物。"
+}

@@ -1,0 +1,20 @@
+{
+  "plugin.name": "Infinite Canvas",
+  "plugin.description": "Compose existing generation plugins, automation actions, and canvas-only nodes into shareable workflows.",
+  "action.list": "List canvas workflows",
+  "action.list.description": "List infinite-canvas workflows saved in the current project.",
+  "action.get": "Get canvas workflow",
+  "action.get.description": "Read one complete workflow JSON document from the current project.",
+  "action.save": "Save canvas workflow",
+  "action.save.description": "Create or revision-update a complete workflow in the current project.",
+  "action.delete": "Delete canvas workflow",
+  "action.delete.description": "Delete one canvas workflow from the current project.",
+  "action.import_asset": "Import canvas media",
+  "action.import_asset.description": "Persist local media dropped onto the canvas in the current project library.",
+  "action.agent_skills": "List canvas agent skills",
+  "action.agent_skills.description": "List plugin-owned skills available to the Infinite Canvas agent node.",
+  "action.agent_run": "Run canvas agent",
+  "action.agent_run.description": "Run a canvas agent using the system LLM or a custom OpenAI-compatible endpoint.",
+  "action.condition_run": "Run LLM condition",
+  "action.condition_run.description": "Evaluate judgement text as Success or Failure; Success passes the upstream payload through unchanged."
+}

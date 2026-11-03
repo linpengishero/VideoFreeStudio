@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "kind": "videofree.infinite-canvas",
+  "id": "workflow-json-preview",
+  "name": "JSON 到数据预览",
+  "nodes": [
+    {
+      "id": "node-json-input",
+      "type": "videofree.input.json",
+      "position": {"x": 80, "y": 140},
+      "config": {
+        "value": {
+          "title": "Shared workflow",
+          "steps": ["write", "review", "render"]
+        }
+      },
+      "values": {}
+    },
+    {
+      "id": "node-data-preview",
+      "type": "videofree.preview.data",
+      "position": {"x": 500, "y": 140},
+      "config": {},
+      "values": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-json-to-preview",
+      "kind": "data",
+      "from": {"node": "node-json-input", "port": "value"},
+      "to": {"node": "node-data-preview", "port": "data"}
+    }
+  ],
+  "viewport": {"x": 0, "y": 0, "zoom": 1}
+}
